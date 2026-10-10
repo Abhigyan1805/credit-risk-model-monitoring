@@ -1,89 +1,92 @@
-"""Tests for the table builders and schema normalization."""
-
-import json
-import os
+"""Tests for the Tableau extract builders and the data loaders."""
 
 import pytest
 
-from reporting.schema import MonitoringResults, normalize_results
+from reporting.data import (
+    available_months,
+    load_dev_band_shares,
+    load_results,
+    load_scored_bands,
+    month_date,
+)
 from reporting.tables import (
-    build_all_tables,
-    build_calibration_table,
-    build_fact_table,
-    build_feature_csi_table,
-    build_score_distribution_table,
+    LONG_COLUMNS,
+    build_breaches,
+    build_calibration_by_band,
+    build_csi_by_feature,
+    build_extracts,
+    build_long_table,
+    build_monthly_summary,
+    build_score_distribution,
 )
-
-FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "fixtures", "synthetic_monitoring_results.json"
-)
+from reporting.tests import _synth
 
 
-@pytest.fixture()
-def results() -> MonitoringResults:
-    with open(FIXTURE, "r", encoding="utf-8") as fh:
-        return normalize_results(json.load(fh))
+def test_month_date():
+    assert month_date("2014-06") == "2014-06-01"
 
 
-def test_normalize_rejects_empty_periods():
-    with pytest.raises(ValueError):
-        normalize_results({"periods": []})
+def test_available_months_and_load(crm_data):
+    months = available_months()
+    assert months == _synth.MONTHS
+    assert load_results(up_to="2014-03")["month"].unique().tolist() == _synth.MONTHS[:3]
 
 
-def test_normalize_computes_period_rag(results):
-    # First synthetic month is healthy; the last is clearly red.
-    assert results.periods_sorted[0]["rag"] == "green"
-    assert results.periods_sorted[-1]["rag"] == "red"
+def test_load_results_validates_and_adds_month_date(results):
+    assert "month_date" in results.columns
+    assert results["month_date"].iloc[0].endswith("-01")
 
 
-def test_normalize_ignores_non_numeric_reference():
-    normalized = normalize_results(
-        {
-            "model": {"reference_metrics": {"auc": "0.7", "gini": "bad"}},
-            "periods": [{"period": "2020-01", "metrics": {"psi": 0.01}}],
-        }
-    )
-    assert normalized.reference_metrics == {"auc": 0.7}
+def test_long_table_columns(results):
+    table = build_long_table(results)
+    assert list(table.columns) == LONG_COLUMNS
+    assert table["month_date"].str.endswith("-01").all()
 
 
-def test_fact_table_shape(results):
-    columns, rows = build_fact_table(results)
-    assert columns[0] == "period"
-    assert len(rows) == len(results.periods)
-    assert set(rows[0]) == set(columns)
-    # Chronological order.
-    assert rows[0]["period"] < rows[-1]["period"]
-    assert rows[-1]["rag_overall"] == "red"
-    assert rows[0]["rag_overall"] == "green"
+def test_monthly_summary(results):
+    summary = build_monthly_summary(results)
+    assert len(summary) == len(_synth.MONTHS)
+    assert summary["overall_rag"].iloc[-1] == "RED"  # series deteriorates
+    assert {"psi_score", "csi_max", "gini", "ks", "calibration_ratio", "hl_pvalue"} <= set(summary.columns)
+    assert summary["month_date"].str.endswith("-01").all()
 
 
-def test_score_distribution_share_delta(results):
-    _, rows = build_score_distribution_table(results)
-    assert rows
-    for row in rows:
-        assert row["share_delta"] == pytest.approx(row["share"] - row["expected_share"], abs=1e-6)
+def test_score_distribution_shares_sum_to_one(results):
+    bands = load_scored_bands(_synth.MONTHS)
+    dist = build_score_distribution(bands, load_dev_band_shares())
+    for _, group in dist.groupby("month"):
+        assert group["share"].sum() == pytest.approx(1.0)
+    assert dist["share_delta"].notna().all()
 
 
-def test_calibration_gap_derived(results):
-    _, rows = build_calibration_table(results)
-    assert rows
-    for row in rows:
-        expected = abs(row["observed_pd"] - row["predicted_pd"])
-        assert row["abs_gap"] == pytest.approx(expected, abs=1e-6)
+def test_csi_by_feature(results):
+    csi = build_csi_by_feature(results)
+    assert set(csi["feature"]) == set(_synth.FEATURES)
+    assert set(csi["month"]) == set(_synth.MONTHS)
 
 
-def test_feature_csi_has_every_feature_every_period(results):
-    _, rows = build_feature_csi_table(results)
-    features = {r["feature"] for r in rows}
-    periods = {r["period"] for r in rows}
-    assert len(rows) == len(features) * len(periods)
-    assert all(r["rag"] in {"green", "amber", "red"} for r in rows)
+def test_calibration_by_band(results):
+    calib = build_calibration_by_band(results)
+    assert sorted(calib["band"].unique().tolist()) == list(range(1, 11))
+    assert {"calibration_ratio", "binomial_pvalue", "rag_calibration_ratio"} <= set(calib.columns)
 
 
-def test_build_all_tables_keys(results):
-    tables = build_all_tables(results)
-    assert set(tables) == {"fact", "score_distribution", "calibration_by_band", "feature_csi", "breaches"}
-    for columns, rows in tables.values():
-        assert isinstance(columns, list) and columns
-        for row in rows:
-            assert set(row) == set(columns)
+def test_breaches_only_amber_red(results):
+    breaches = build_breaches(results)
+    assert not breaches.empty
+    assert set(breaches["rag"]) <= {"AMBER", "RED"}
+    assert breaches["message"].str.len().gt(0).all()
+
+
+def test_build_extracts_keys(results):
+    bands = load_scored_bands(_synth.MONTHS)
+    extracts = build_extracts(results, bands)
+    assert set(extracts) == {
+        "monitoring_results",
+        "monthly_summary",
+        "score_distribution",
+        "csi_by_feature",
+        "calibration_by_band",
+        "breaches",
+    }
+    assert all(not df.empty for df in extracts.values())

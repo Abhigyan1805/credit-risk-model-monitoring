@@ -1,65 +1,43 @@
-"""Tests for RAG classification logic."""
+"""Tests for the RAG helpers."""
 
 import pytest
 
-from reporting.rag import (
-    classify_breaches,
-    classify_metric,
-    worst_status,
-)
+from reporting.rag import is_breach, rag_color, rag_from_value, worst_rag
 
 
-def test_psi_absolute_thresholds():
-    assert classify_metric("psi", 0.05) == "green"
-    assert classify_metric("psi", 0.10) == "amber"
-    assert classify_metric("psi", 0.20) == "amber"
-    assert classify_metric("psi", 0.25) == "red"
-    assert classify_metric("psi", 0.99) == "red"
+def test_higher_worse_thresholds():
+    assert rag_from_value(0.05, 0.10, 0.25, "higher_worse") == "GREEN"
+    assert rag_from_value(0.10, 0.10, 0.25, "higher_worse") == "AMBER"
+    assert rag_from_value(0.20, 0.10, 0.25, "higher_worse") == "AMBER"
+    assert rag_from_value(0.25, 0.10, 0.25, "higher_worse") == "RED"
 
 
-def test_missing_value_is_none():
-    assert classify_metric("psi", None) is None
-    assert classify_metric("unknown_metric", 0.5) is None
+def test_lower_worse_thresholds():
+    assert rag_from_value(0.45, 0.40, 0.30, "lower_worse") == "GREEN"
+    assert rag_from_value(0.35, 0.40, 0.30, "lower_worse") == "AMBER"
+    assert rag_from_value(0.25, 0.40, 0.30, "lower_worse") == "RED"
 
 
-def test_auc_drop_relative_to_reference():
-    ref = 0.72
-    assert classify_metric("auc", 0.72, reference_value=ref) == "green"
-    assert classify_metric("auc", 0.719, reference_value=ref) == "green"
-    assert classify_metric("auc", 0.70, reference_value=ref) == "amber"
-    assert classify_metric("auc", 0.66, reference_value=ref) == "red"
-    # An improvement is never a breach.
-    assert classify_metric("auc", 0.80, reference_value=ref) == "green"
+def test_missing_value_is_na():
+    assert rag_from_value(None, 0.1, 0.25, "higher_worse") == "NA"
 
 
-def test_drop_metric_without_reference_is_unclassified():
-    assert classify_metric("auc", 0.70) is None
+def test_unknown_direction_raises():
+    with pytest.raises(ValueError):
+        rag_from_value(0.5, 0.1, 0.25, "sideways")
 
 
-def test_calibration_gap_is_increase_worse():
-    assert classify_metric("calibration_gap", 0.01) == "green"
-    assert classify_metric("calibration_gap", 0.03) == "amber"
-    assert classify_metric("calibration_gap", 0.06) == "red"
+def test_worst_rag():
+    assert worst_rag(["GREEN", "AMBER", "GREEN"]) == "AMBER"
+    assert worst_rag(["GREEN", "RED", "AMBER"]) == "RED"
+    assert worst_rag(["NA", "NA"]) == "NA"
+    assert worst_rag([]) == "NA"
+    # NA never outranks a real status.
+    assert worst_rag(["NA", "GREEN"]) == "GREEN"
 
 
-def test_worst_status_ignores_missing():
-    assert worst_status([None, None]) is None
-    assert worst_status(["green", None, "amber"]) == "amber"
-    assert worst_status(["green", "red", "amber"]) == "red"
-
-
-def test_classify_breaches_reports_only_deterioration():
-    metrics = {"psi": 0.30, "csi": 0.05, "auc": 0.65, "gini": 0.30, "ks": 0.30, "calibration_gap": 0.01}
-    reference = {"auc": 0.72, "gini": 0.44, "ks": 0.335}
-    breaches = classify_breaches(metrics, reference)
-    levels = {b["metric"]: b["level"] for b in breaches}
-    assert levels["psi"] == "red"
-    assert levels["auc"] == "red"
-    assert "csi" not in levels  # 0.05 is green
-    assert "calibration_gap" not in levels
-    assert all(b["message"] for b in breaches)
-
-
-def test_classify_breaches_empty_when_all_healthy():
-    metrics = {"psi": 0.02, "csi": 0.02, "auc": 0.72, "gini": 0.44, "ks": 0.335, "calibration_gap": 0.005}
-    assert classify_breaches(metrics, {"auc": 0.72, "gini": 0.44, "ks": 0.335}) == []
+def test_is_breach_and_color():
+    assert is_breach("AMBER") and is_breach("RED")
+    assert not is_breach("GREEN") and not is_breach("NA")
+    assert rag_color("RED") == "#c0392b"
+    assert rag_color("garbage") == "#6b7280"

@@ -1,328 +1,141 @@
-"""Chart builders for the report and dashboard.
+"""Matplotlib charts for the monthly report, rendered as embedded PNGs.
 
-Two rendering paths are provided:
-
-* **Plotly** (preferred) — interactive charts used by both the per-run report
-  and the fallback dashboard. Requires the optional ``plotly`` dependency.
-* **Inline SVG** (fallback) — small, dependency-free renderers used when
-  Plotly is not installed, so a report can always be produced.
-
-The Plotly figures are returned as HTML ``<div>`` fragments (no full HTML
-wrapper), ready to drop into a Jinja2 template. ``include_plotlyjs`` is left
-to the caller so plotly.js is loaded exactly once per page.
+The report must be a single self-contained HTML file, so each chart is drawn on
+an in-memory figure and returned as a base64 ``data:`` URI. Matplotlib is a
+pinned dependency (see ``pyproject.toml``); the ``Agg`` backend is used so no
+display is required (CI-safe).
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import base64
+import io
 
-from reporting.rag import METRIC_LABELS, status_for_color
-from reporting.schema import MonitoringResults
-from reporting.tables import build_calibration_table, build_fact_table, build_feature_csi_table
+import matplotlib
 
-GREEN = "#1b8a4b"
-AMBER = "#d99100"
-RED = "#c0392b"
-GREY = "#6b7280"
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
 
+from reporting.rag import RAG_COLORS, rag_color  # noqa: E402
 
-def has_plotly() -> bool:
-    try:
-        import plotly  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
+_CSI_CMAP = LinearSegmentedColormap.from_list("csi", ["#e8f5ec", "#7fbf8f", "#e0b84c", "#c0392b"])
 
 
-# --------------------------------------------------------------------------- #
-# Plotly figures
-# --------------------------------------------------------------------------- #
-def psi_trend_figure(results: MonitoringResults):
-    """PSI and CSI over time with green/amber/red reference bands."""
-    import plotly.graph_objects as go
-
-    columns, rows = build_fact_table(results)
-    periods = [r["period"] for r in rows]
-    fig = go.Figure()
-    fig.add_hrect(y0=0, y1=0.10, fillcolor=GREEN, opacity=0.08, line_width=0)
-    fig.add_hrect(y0=0.10, y1=0.25, fillcolor=AMBER, opacity=0.10, line_width=0)
-    fig.add_hrect(y0=0.25, y1=max(0.35, _max_metric(rows, ["psi", "csi"])), fillcolor=RED, opacity=0.08, line_width=0)
-    fig.add_trace(go.Scatter(x=periods, y=[r["psi"] for r in rows], name="PSI", mode="lines+markers", line=dict(color="#1f4e79")))
-    fig.add_trace(go.Scatter(x=periods, y=[r["csi"] for r in rows], name="CSI", mode="lines+markers", line=dict(color="#8e44ad")))
-    fig.update_layout(
-        title="Population / Characteristic Stability (PSI, CSI)",
-        yaxis_title="Index value",
-        xaxis_title="Monitoring period",
-        margin=dict(l=50, r=20, t=50, b=50),
-        height=340,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        template="plotly_white",
-    )
-    return fig
+def _to_data_uri(fig: Figure) -> str:
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
-def discrimination_trend_figure(results: MonitoringResults):
-    """Gini and KS over time with the RAG-coloured final markers."""
-    import plotly.graph_objects as go
-
-    reference = results.reference_metrics
-    _, rows = build_fact_table(results)
-    periods = [r["period"] for r in rows]
-    colors = [status_for_color(r["rag_gini"]) for r in rows]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=periods, y=[r["gini"] for r in rows], name="Gini", mode="lines+markers", line=dict(color="#1f4e79"), marker=dict(color=colors, size=9)))
-    fig.add_trace(go.Scatter(x=periods, y=[r["ks"] for r in rows], name="KS", mode="lines+markers", line=dict(color="#16a085")))
-    if reference.get("gini") is not None:
-        fig.add_hline(y=reference["gini"], line_dash="dot", line_color=GREY, annotation_text="Gini reference", annotation_position="top left")
-    if reference.get("ks") is not None:
-        fig.add_hline(y=reference["ks"], line_dash="dot", line_color=GREY, annotation_text="KS reference", annotation_position="bottom left")
-    fig.update_layout(
-        title="Discrimination over time (Gini, KS)",
-        yaxis_title="Statistic value",
-        xaxis_title="Monitoring period",
-        margin=dict(l=50, r=20, t=50, b=50),
-        height=340,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        template="plotly_white",
-    )
-    return fig
+def psi_trend(summary: pd.DataFrame, amber: float = 0.10, red: float = 0.25) -> str:
+    """PSI (score) and the largest feature CSI over time, with RAG reference bands."""
+    fig, ax = plt.subplots(figsize=(7.2, 3.0))
+    x = range(len(summary))
+    top = float(max(summary["psi_score"].max(), summary["csi_max"].max(), red)) * 1.15
+    ax.axhspan(0, amber, color=RAG_COLORS["GREEN"], alpha=0.08)
+    ax.axhspan(amber, red, color=RAG_COLORS["AMBER"], alpha=0.10)
+    ax.axhspan(red, top, color=RAG_COLORS["RED"], alpha=0.08)
+    ax.plot(x, summary["psi_score"], marker="o", color="#1f4e79", label="PSI (score)")
+    ax.plot(x, summary["csi_max"], marker="s", color="#8e44ad", label="CSI (max feature)")
+    ax.axhline(amber, color=RAG_COLORS["AMBER"], ls="--", lw=1)
+    ax.axhline(red, color=RAG_COLORS["RED"], ls="--", lw=1)
+    ax.set_ylim(0, top)
+    _month_axis(ax, summary)
+    ax.set_title("Population / characteristic stability (PSI, CSI)")
+    ax.set_ylabel("Index value")
+    ax.legend(loc="upper left", fontsize=8)
+    return _to_data_uri(fig)
 
 
-def calibration_figure(results: MonitoringResults, period: Optional[str] = None):
-    """Predicted vs observed default rate by score band (bar + line)."""
-    import plotly.graph_objects as go
-
-    _, rows = build_calibration_table(results)
-    if period is None:
-        latest = results.latest_period
-        period = latest["period"] if latest else None
-    rows = [r for r in rows if r["period"] == period]
-    bands = [r["band"] for r in rows]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=bands, y=[r["observed_pd"] for r in rows], name="Observed PD", marker_color="#1f4e79"))
-    fig.add_trace(go.Scatter(x=bands, y=[r["predicted_pd"] for r in rows], name="Predicted PD", mode="lines+markers", line=dict(color=AMBER, width=3)))
-    fig.update_layout(
-        title=f"Calibration by score band — {period}",
-        yaxis_title="Default rate",
-        xaxis_title="Score band (safest → riskiest)",
-        margin=dict(l=50, r=20, t=50, b=50),
-        height=340,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        template="plotly_white",
-    )
-    return fig
-
-
-def csi_heatmap_figure(results: MonitoringResults):
-    """Feature CSI heat-map: features (rows) x periods (columns)."""
-    import plotly.graph_objects as go
-
-    _, rows = build_feature_csi_table(results)
-    features = sorted({r["feature"] for r in rows})
-    periods = sorted({r["period"] for r in rows})
-    index = {(r["feature"], r["period"]): r["csi"] for r in rows}
-    z = [[index.get((f, p)) for p in periods] for f in features]
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=z,
-            x=periods,
-            y=features,
-            colorscale=[[0.0, "#e8f5ec"], [0.4, GREEN], [0.7, AMBER], [1.0, RED]],
-            zmin=0,
-            zmax=0.25,
-            colorbar=dict(title="CSI"),
-        )
-    )
-    fig.update_layout(
-        title="Feature Characteristic Stability Index (CSI)",
-        xaxis_title="Monitoring period",
-        margin=dict(l=120, r=20, t=50, b=50),
-        height=360,
-        template="plotly_white",
-    )
-    return fig
-
-
-def _max_metric(rows, metrics) -> float:
-    values = [r[m] for r in rows for m in metrics if isinstance(r.get(m), (int, float))]
-    return max(values) if values else 0.35
-
-
-def figures_to_html(figures: dict, inline_js: bool = False) -> tuple[dict[str, str], str]:
-    """Render a mapping of name -> Plotly figure to HTML fragments.
-
-    Returns ``(fragments, plotlyjs)`` where ``fragments`` maps the same names to
-    ``<div>`` HTML and ``plotlyjs`` is either a ``<script>`` tag with the CDN
-    URL or the inline plotly.js bundle (when ``inline_js=True``).
-    """
-    import plotly.io as pio
-
-    fragments = {
-        name: pio.to_html(fig, include_plotlyjs=False, full_html=False, config={"displayModeBar": False})
-        for name, fig in figures.items()
-    }
-    plotlyjs = pio.to_html(
-        _blank_figure(), include_plotlyjs="inline" if inline_js else "cdn", full_html=False
-    )
-    return fragments, plotlyjs
-
-
-def _blank_figure():
-    import plotly.graph_objects as go
-
-    return go.Figure()
-
-
-# --------------------------------------------------------------------------- #
-# Dependency-free SVG fallback
-# --------------------------------------------------------------------------- #
-def line_chart_svg(
-    x_labels: list[str],
-    series: dict[str, list[Optional[float]]],
-    width: int = 720,
-    height: int = 260,
-    y_min: Optional[float] = None,
-    y_max: Optional[float] = None,
+def discrimination_trend(
+    summary: pd.DataFrame,
+    gini_amber: float | None = None,
+    gini_red: float | None = None,
+    ks_amber: float | None = None,
+    ks_red: float | None = None,
 ) -> str:
-    """Render one or more line series as a standalone inline SVG string."""
-    pad_l, pad_r, pad_t, pad_b = 48, 16, 16, 40
-    values = [v for vals in series.values() for v in vals if isinstance(v, (int, float))]
-    lo = y_min if y_min is not None else (min(values) if values else 0.0)
-    hi = y_max if y_max is not None else (max(values) if values else 1.0)
-    if hi <= lo:
-        hi = lo + 1.0
-    plot_w = width - pad_l - pad_r
-    plot_h = height - pad_t - pad_b
-    n = max(1, len(x_labels) - 1)
-
-    def sx(i: int) -> float:
-        return pad_l + plot_w * (i / n)
-
-    def sy(v: float) -> float:
-        return pad_t + plot_h * (1 - (v - lo) / (hi - lo))
-
-    parts = [
-        f'<svg viewBox="0 0 {width} {height}" class="cf-chart" role="img" '
-        f'xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="11">',
-        f'<rect x="{pad_l}" y="{pad_t}" width="{plot_w}" height="{plot_h}" fill="#fafafa" stroke="#ddd"/>',
-    ]
-    for tick in range(5):
-        v = lo + (hi - lo) * tick / 4
-        y = sy(v)
-        parts.append(f'<line x1="{pad_l}" y1="{y:.1f}" x2="{pad_l + plot_w}" y2="{y:.1f}" stroke="#eee"/>')
-        parts.append(f'<text x="{pad_l - 6}" y="{y + 4:.1f}" text-anchor="end" fill="#666">{v:.2f}</text>')
-    step = max(1, len(x_labels) // 6)
-    for i, label in enumerate(x_labels):
-        if i % step == 0:
-            parts.append(f'<text x="{sx(i):.1f}" y="{height - 12}" text-anchor="middle" fill="#666">{label}</text>')
-    palette = ["#1f4e79", "#8e44ad", "#16a085", "#c0392b", "#d99100"]
-    for s, (name, vals) in enumerate(series.items()):
-        color = palette[s % len(palette)]
-        points = " ".join(
-            f"{sx(i):.1f},{sy(v):.1f}" for i, v in enumerate(vals) if isinstance(v, (int, float))
-        )
-        parts.append(f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2"/>')
-        parts.append(f'<text x="{pad_l + 8 + s * 90}" y="{pad_t + 14}" fill="{color}">■ {name}</text>')
-    parts.append("</svg>")
-    return "".join(parts)
+    """Gini and KS over time with their lower-worse reference lines."""
+    fig, ax = plt.subplots(figsize=(7.2, 3.0))
+    x = range(len(summary))
+    for col, color, label in (("gini", "#1f4e79", "Gini"), ("ks", "#16a085", "KS")):
+        if col not in summary:
+            continue
+        colors = [rag_color(r) for r in summary.get(f"rag_{col}", pd.Series(["NA"] * len(summary)))]
+        ax.plot(x, summary[col], color=color, marker="o", label=label)
+        ax.scatter(x, summary[col], c=colors, s=42, zorder=3, edgecolors="white", linewidths=0.6)
+    if gini_amber is not None:
+        ax.axhline(gini_amber, color="#1f4e79", ls=":", lw=1, label="Gini amber")
+    if gini_red is not None:
+        ax.axhline(gini_red, color="#1f4e79", ls="--", lw=1, label="Gini red")
+    if ks_amber is not None:
+        ax.axhline(ks_amber, color="#16a085", ls=":", lw=1, label="KS amber")
+    if ks_red is not None:
+        ax.axhline(ks_red, color="#16a085", ls="--", lw=1, label="KS red")
+    _month_axis(ax, summary)
+    ax.set_title("Discrimination over time (Gini, KS)")
+    ax.set_ylabel("Statistic")
+    ax.legend(loc="best", fontsize=8, ncol=2)
+    return _to_data_uri(fig)
 
 
-def heatmap_svg(
-    row_labels: list[str],
-    col_labels: list[str],
-    matrix: list[list[Optional[float]]],
-    width: int = 720,
-    height: int = 300,
-    v_max: float = 0.25,
-) -> str:
-    """Render a matrix as an inline SVG heat-map."""
-    pad_l, pad_t = 120, 30
-    cell_w = max(6.0, (width - pad_l - 10) / max(1, len(col_labels)))
-    cell_h = max(6.0, (height - pad_t - 10) / max(1, len(row_labels)))
-    parts = [
-        f'<svg viewBox="0 0 {width} {height}" class="cf-chart" role="img" '
-        f'xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="10">'
-    ]
-    for r, label in enumerate(row_labels):
-        parts.append(f'<text x="{pad_l - 6}" y="{pad_t + r * cell_h + cell_h * 0.7:.1f}" text-anchor="end" fill="#555">{label}</text>')
-    step = max(1, len(col_labels) // 8)
-    for c, label in enumerate(col_labels):
-        if c % step == 0:
-            parts.append(f'<text x="{pad_l + c * cell_w + cell_w / 2:.1f}" y="{pad_t - 8}" text-anchor="middle" fill="#555">{label}</text>')
-    for r, row in enumerate(matrix):
-        for c, value in enumerate(row):
-            fill = _heat_color(value, v_max)
-            x = pad_l + c * cell_w
-            y = pad_t + r * cell_h
-            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cell_w:.1f}" height="{cell_h:.1f}" fill="{fill}" stroke="#fff" stroke-width="0.5"/>')
-    parts.append("</svg>")
-    return "".join(parts)
+def calibration_by_band(calib: pd.DataFrame, amber: float = 0.15, red: float = 0.30) -> str:
+    """Observed/predicted calibration ratio by band, with a target line at 1.0."""
+    fig, ax = plt.subplots(figsize=(7.2, 3.0))
+    if calib.empty:
+        ax.text(0.5, 0.5, "No calibration data for this month", ha="center", va="center")
+        ax.axis("off")
+        return _to_data_uri(fig)
+    bands = calib["band"].astype(str)
+    colors = [rag_color(r) for r in calib["rag_calibration_ratio"].fillna("NA")]
+    ax.bar(bands, calib["calibration_ratio"], color=colors)
+    ax.axhline(1.0, color="#333", lw=1.2, ls="-")
+    ax.axhline(1.0 + amber, color=RAG_COLORS["AMBER"], ls="--", lw=1)
+    ax.axhline(1.0 - amber, color=RAG_COLORS["AMBER"], ls="--", lw=1)
+    ax.axhline(1.0 + red, color=RAG_COLORS["RED"], ls=":", lw=1)
+    ax.axhline(1.0 - red, color=RAG_COLORS["RED"], ls=":", lw=1)
+    ax.set_title("Calibration by score band (observed / predicted)")
+    ax.set_xlabel("Score band (1 = safest, 10 = riskiest)")
+    ax.set_ylabel("Calibration ratio")
+    return _to_data_uri(fig)
 
 
-def _heat_color(value: Optional[float], v_max: float) -> str:
-    if not isinstance(value, (int, float)):
-        return "#f0f0f0"
-    t = max(0.0, min(1.0, value / v_max))
-    if t < 0.4:
-        return "#7fbf8f"
-    if t < 0.7:
-        return "#e0b84c"
-    return "#c0392b"
+def csi_heatmap(csi_by_feature: pd.DataFrame, v_max: float = 0.25) -> str:
+    """Feature (rows) x month (columns) heat-map of CSI."""
+    fig, ax = plt.subplots(figsize=(7.2, 3.6))
+    if csi_by_feature.empty:
+        ax.text(0.5, 0.5, "No CSI data", ha="center", va="center")
+        ax.axis("off")
+        return _to_data_uri(fig)
+    matrix = csi_by_feature.pivot_table(index="feature", columns="month", values="csi", aggfunc="first")
+    image = ax.imshow(matrix.values, aspect="auto", cmap=_CSI_CMAP, vmin=0, vmax=v_max)
+    ax.set_xticks(range(len(matrix.columns)))
+    ax.set_xticklabels(matrix.columns, rotation=90, fontsize=7)
+    ax.set_yticks(range(len(matrix.index)))
+    ax.set_yticklabels(matrix.index, fontsize=8)
+    fig.colorbar(image, ax=ax, label="CSI", fraction=0.046, pad=0.02)
+    ax.set_title("Feature Characteristic Stability Index (CSI)")
+    return _to_data_uri(fig)
 
 
-def svg_fallback_charts(results: MonitoringResults) -> dict[str, str]:
-    """Build all four views as inline SVG strings (no Plotly required)."""
-    _, fact = build_fact_table(results)
-    periods = [r["period"] for r in fact]
-    csi_svg = line_chart_svg(
-        periods,
-        {"Gini": [r["gini"] for r in fact], "KS": [r["ks"] for r in fact]},
-    )
-    psi_svg = line_chart_svg(
-        periods,
-        {"PSI": [r["psi"] for r in fact], "CSI": [r["csi"] for r in fact]},
-        y_min=0,
-    )
-    _, calib = build_calibration_table(results)
-    latest = periods[-1] if periods else None
-    calib_rows = [r for r in calib if r["period"] == latest]
-    matrix = [[r["observed_pd"] for r in calib_rows]]
-    calib_svg = heatmap_svg(
-        ["Observed PD"], [r["band"] for r in calib_rows], matrix, v_max=0.5
-    )
-    _, feat = build_feature_csi_table(results)
-    features = sorted({r["feature"] for r in feat})
-    csi_index = {(r["feature"], r["period"]): r["csi"] for r in feat}
-    csi_matrix = [[csi_index.get((f, p)) for p in periods] for f in features]
-    csi_heat = heatmap_svg(features, periods, csi_matrix)
-    return {
-        "psi_trend": psi_svg,
-        "discrimination_trend": csi_svg,
-        "calibration": calib_svg,
-        "csi_heatmap": csi_heat,
-    }
+def rag_strip(summary: pd.DataFrame) -> str:
+    """A one-row-per-month strip coloured by the headline RAG status."""
+    fig, ax = plt.subplots(figsize=(7.2, 1.0))
+    for i, (_, row) in enumerate(summary.iterrows()):
+        ax.barh(0, 1, left=i, color=rag_color(row.get("overall_rag")), edgecolor="white")
+    ax.set_xlim(0, len(summary))
+    ax.set_yticks([])
+    ax.set_xticks([i + 0.5 for i in range(len(summary))])
+    ax.set_xticklabels(list(summary["month"]), rotation=90, fontsize=7)
+    ax.set_title("Headline status by month", fontsize=10)
+    return _to_data_uri(fig)
 
 
-def build_plotly_figures(results: MonitoringResults) -> dict:
-    """Build the standard set of Plotly figures for a results object."""
-    return {
-        "psi_trend": psi_trend_figure(results),
-        "discrimination_trend": discrimination_trend_figure(results),
-        "calibration": calibration_figure(results),
-        "csi_heatmap": csi_heatmap_figure(results),
-    }
-
-
-__all__ = [
-    "has_plotly",
-    "build_plotly_figures",
-    "figures_to_html",
-    "svg_fallback_charts",
-    "psi_trend_figure",
-    "discrimination_trend_figure",
-    "calibration_figure",
-    "csi_heatmap_figure",
-    "line_chart_svg",
-    "heatmap_svg",
-]
+def _month_axis(ax, summary: pd.DataFrame) -> None:
+    ax.set_xticks(range(len(summary)))
+    ax.set_xticklabels(list(summary["month"]), rotation=90, fontsize=7)
+    ax.grid(axis="y", alpha=0.25)

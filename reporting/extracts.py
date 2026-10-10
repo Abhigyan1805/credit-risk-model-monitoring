@@ -1,150 +1,192 @@
-"""Write Tableau-ready CSV extracts plus a data dictionary.
+"""Write the Tableau-ready CSV extracts. ``python -m reporting.extracts``
 
-The outputs of :func:`write_extracts` are what the reader connects to from
-Tableau Public (or any BI tool):
+Output: ``common.paths.tableau_dir()`` (``data/tableau/`` by default), UTF-8 CSV
+with a header row and ISO ``YYYY-MM-01`` month dates (see ``docs/CONTRACTS.md``
+section 6):
 
-* ``monitoring_fact.csv`` — one row per (period) with all headline metrics and
-  their RAG status. The spine of the dashboard.
-* ``score_distribution.csv`` — one row per (period, score band).
-* ``calibration_by_band.csv`` — one row per (period, score band).
-* ``feature_csi.csv`` — one row per (period, feature).
-* ``breaches.csv`` — one row per amber/red metric breach.
+* ``monitoring_results.csv`` — the long monitoring table plus ``month_date``.
+* ``monthly_summary.csv`` — one row per month, wide, with RAG statuses.
+* ``score_distribution.csv`` — population share per score band per month.
+* ``csi_by_feature.csv`` — Characteristic Stability Index per feature per month.
+* ``calibration_by_band.csv`` — calibration ratio and binomial p-value per band.
+* ``breaches.csv`` — every amber/red metric row (convenience for the breach list).
 * ``data_dictionary.csv`` / ``data_dictionary.md`` — column-level documentation.
 
-All files are UTF-8, comma-separated, with a header row.
+Owner: builder #4. All numbers come from the monitoring results and the scored
+vintages; nothing here is hard-coded.
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
-import os
-from typing import Any
+from pathlib import Path
 
-from reporting.schema import MonitoringResults
-from reporting.tables import build_all_tables
+import pandas as pd
 
-#: The four "named" extracts called out in the task, mapped to output filename.
-EXTRACT_FILES = {
-    "fact": "monitoring_fact.csv",
+from common import paths
+from reporting.data import available_months, load_results, load_scored_bands
+from reporting.tables import build_extracts
+
+EXTRACT_FILES: dict[str, str] = {
+    "monitoring_results": "monitoring_results.csv",
+    "monthly_summary": "monthly_summary.csv",
     "score_distribution": "score_distribution.csv",
+    "csi_by_feature": "csi_by_feature.csv",
     "calibration_by_band": "calibration_by_band.csv",
-    "feature_csi": "feature_csi.csv",
     "breaches": "breaches.csv",
 }
 
-#: Column-level documentation. ``dtype`` and ``description`` are surfaced in
-#: the data dictionary and repeated in docs/reporting/TABLEAU_DASHBOARD.md.
+#: Column-level documentation, surfaced as data_dictionary.{csv,md}.
 DATA_DICTIONARY: dict[str, dict[str, tuple[str, str]]] = {
-    "fact": {
-        "period": ("string", "Monitoring month, format YYYY-MM."),
-        "n_obs": ("integer", "Number of scored accounts/loans observed in the period."),
-        "default_rate": ("decimal", "Observed default rate in the period (0-1)."),
-        "psi": ("decimal", "Population Stability Index versus the reference period."),
-        "csi": ("decimal", "Largest Characteristic Stability Index across features."),
-        "auc": ("decimal", "Area under the ROC curve, a discrimination measure."),
+    "monitoring_results": {
+        "month": ("string", "Monitoring month, YYYY-MM (the loan vintage)."),
+        "month_date": ("date", "month as an ISO date, YYYY-MM-01, for Tableau date axes."),
+        "metric": ("string", "Metric name, e.g. psi_score, csi, auc, calibration_ratio, overall_rag."),
+        "segment": ("string", "ALL, a feature name (csi) or band=<k> (calibration)."),
+        "value": ("decimal", "Metric value."),
+        "amber_threshold": ("decimal", "Amber threshold from config/thresholds.yaml."),
+        "red_threshold": ("decimal", "Red threshold from config/thresholds.yaml."),
+        "direction": ("string", "higher_worse or lower_worse."),
+        "rag": ("string", "GREEN / AMBER / RED / NA (NA = not computable)."),
+        "n_obs": ("integer", "Accounts observed for the month/metric."),
+        "model_version": ("string", "Frozen model version."),
+    },
+    "monthly_summary": {
+        "month": ("string", "Monitoring month, YYYY-MM."),
+        "month_date": ("date", "month as ISO date YYYY-MM-01."),
+        "volume": ("integer", "Loans originated in the vintage."),
+        "mean_pd": ("decimal", "Mean predicted probability of default."),
+        "default_rate": ("decimal", "Observed default rate (NA when outcomes not observable)."),
+        "psi_score": ("decimal", "PSI of the score distribution vs the dev reference."),
+        "csi_max": ("decimal", "Largest feature CSI in the month."),
+        "auc": ("decimal", "AUC (NA when outcomes not observable)."),
         "gini": ("decimal", "Gini = 2*AUC - 1."),
-        "ks": ("decimal", "Kolmogorov-Smirnov statistic, a discrimination measure."),
-        "calibration_gap": ("decimal", "Mean absolute |predicted PD - observed default rate|."),
-        "rag_overall": ("string", "Worst RAG status across monitored metrics: green/amber/red."),
-        "rag_psi": ("string", "RAG status for PSI."),
-        "rag_csi": ("string", "RAG status for CSI."),
-        "rag_auc": ("string", "RAG status for AUC."),
-        "rag_gini": ("string", "RAG status for Gini."),
-        "rag_ks": ("string", "RAG status for KS."),
-        "rag_calibration": ("string", "RAG status for the calibration gap."),
+        "ks": ("decimal", "Kolmogorov-Smirnov statistic."),
+        "calibration_ratio": ("decimal", "Observed default rate / mean PD (ALL segment)."),
+        "hl_pvalue": ("decimal", "Hosmer-Lemeshow style calibration p-value."),
+        "overall_rag": ("string", "Headline status: worst metric RAG for the month."),
+        "rag_psi_score": ("string", "RAG status for psi_score."),
+        "rag_csi_max": ("string", "RAG status for the largest feature CSI."),
+        "rag_auc": ("string", "RAG status for auc."),
+        "rag_gini": ("string", "RAG status for gini."),
+        "rag_ks": ("string", "RAG status for ks."),
+        "rag_calibration_ratio": ("string", "RAG status for calibration_ratio."),
+        "rag_hl_pvalue": ("string", "RAG status for hl_pvalue."),
     },
     "score_distribution": {
-        "period": ("string", "Monitoring month, format YYYY-MM."),
-        "band": ("string", "Score decile/band label, e.g. 'A' (lowest risk) to 'J'."),
-        "score_min": ("decimal", "Lower bound of the PD score band."),
-        "score_max": ("decimal", "Upper bound of the PD score band."),
-        "count": ("integer", "Accounts/loans scored into the band."),
-        "share": ("decimal", "Share of the period population in the band (0-1)."),
-        "expected_share": ("decimal", "Reference-period share for the band (0-1)."),
-        "share_delta": ("decimal", "share minus expected_share; population drift per band."),
+        "month": ("string", "Monitoring month, YYYY-MM."),
+        "month_date": ("date", "month as ISO date YYYY-MM-01."),
+        "score_band": ("integer", "Score band 1 (safest) .. 10 (riskiest)."),
+        "count": ("integer", "Loans in the band."),
+        "share": ("decimal", "Band share of the month population (0-1)."),
+        "dev_share": ("decimal", "Band share in the dev reference population."),
+        "share_delta": ("decimal", "share - dev_share; population drift per band."),
+    },
+    "csi_by_feature": {
+        "month": ("string", "Monitoring month, YYYY-MM."),
+        "month_date": ("date", "month as ISO date YYYY-MM-01."),
+        "feature": ("string", "Input feature name."),
+        "csi": ("decimal", "Characteristic Stability Index for the feature."),
+        "amber_threshold": ("decimal", "Amber threshold (0.10)."),
+        "red_threshold": ("decimal", "Red threshold (0.25)."),
+        "rag": ("string", "GREEN / AMBER / RED / NA."),
     },
     "calibration_by_band": {
-        "period": ("string", "Monitoring month, format YYYY-MM."),
-        "band": ("string", "Score decile/band label."),
-        "count": ("integer", "Accounts/loans scored into the band."),
-        "predicted_pd": ("decimal", "Mean model PD in the band (0-1)."),
-        "observed_pd": ("decimal", "Observed default rate in the band (0-1)."),
-        "abs_gap": ("decimal", "|observed_pd - predicted_pd|; calibration error for the band."),
-        "rag_calibration": ("string", "RAG status for this band's calibration gap."),
-    },
-    "feature_csi": {
-        "period": ("string", "Monitoring month, format YYYY-MM."),
-        "feature": ("string", "Input feature name, e.g. 'annual_inc'."),
-        "csi": ("decimal", "Characteristic Stability Index for the feature."),
-        "rag": ("string", "RAG status for the feature CSI."),
+        "month": ("string", "Monitoring month, YYYY-MM."),
+        "month_date": ("date", "month as ISO date YYYY-MM-01."),
+        "band": ("integer", "Score band 1 (safest) .. 10 (riskiest)."),
+        "calibration_ratio": ("decimal", "Observed default rate / mean PD for the band."),
+        "rag_calibration_ratio": ("string", "RAG status for the calibration ratio."),
+        "binomial_pvalue": ("decimal", "Per-band binomial test p-value of PD vs observed."),
+        "rag_binomial_pvalue": ("string", "RAG status for the binomial p-value."),
     },
     "breaches": {
-        "period": ("string", "Monitoring month the breach was recorded in."),
-        "metric": ("string", "Metric that breached its threshold."),
+        "month": ("string", "Monitoring month, YYYY-MM."),
+        "month_date": ("date", "month as ISO date YYYY-MM-01."),
+        "metric": ("string", "Metric that breached a threshold."),
+        "segment": ("string", "ALL, feature name, or band=<k>."),
         "value": ("decimal", "Observed metric value."),
-        "reference": ("decimal", "Reference value, where applicable."),
-        "level": ("string", "Breach severity: amber or red."),
+        "amber_threshold": ("decimal", "Amber threshold."),
+        "red_threshold": ("decimal", "Red threshold."),
+        "direction": ("string", "higher_worse or lower_worse."),
+        "rag": ("string", "AMBER or RED."),
         "message": ("string", "Plain-English description of the breach."),
     },
 }
 
 
-def write_csv(path: str, columns: list[str], rows: list[dict[str, Any]]) -> None:
-    """Write one tidy table to ``path`` as UTF-8 CSV with a header row."""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({col: _format_cell(row.get(col)) for col in columns})
+def write_dataframe_csv(df: pd.DataFrame, path: Path) -> Path:
+    """Write ``df`` to ``path`` as UTF-8 CSV with a header row."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False, float_format="%.6g")
+    return path
 
 
-def _format_cell(value: Any) -> Any:
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    return "" if value is None else value
-
-
-def write_data_dictionary(out_dir: str) -> tuple[str, str]:
-    """Write the data dictionary as both CSV and Markdown; return their paths."""
-    csv_path = os.path.join(out_dir, "data_dictionary.csv")
-    md_path = os.path.join(out_dir, "data_dictionary.md")
-    os.makedirs(out_dir, exist_ok=True)
-
-    with open(csv_path, "w", encoding="utf-8", newline="") as fh:
-        writer = csv.writer(fh)
+def write_data_dictionary(out_dir: Path) -> tuple[Path, Path]:
+    """Write the data dictionary as CSV and Markdown; return both paths."""
+    csv_path = out_dir / "data_dictionary.csv"
+    md_path = out_dir / "data_dictionary.md"
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
         writer.writerow(["table", "column", "type", "description"])
         for table, columns in DATA_DICTIONARY.items():
             for column, (dtype, description) in columns.items():
                 writer.writerow([table, column, dtype, description])
 
-    lines = ["# Data dictionary", ""]
+    lines = ["# Data dictionary", "", "Extracts in `data/tableau/` (see `docs/CONTRACTS.md` section 6).", ""]
     for table, columns in DATA_DICTIONARY.items():
-        lines.append(f"## `{table}`")
+        lines += [f"## `{table}.csv`", "", "| Column | Type | Description |", "| --- | --- | --- |"]
+        lines += [f"| `{c}` | {t} | {d} |" for c, (t, d) in columns.items()]
         lines.append("")
-        lines.append("| Column | Type | Description |")
-        lines.append("| --- | --- | --- |")
-        for column, (dtype, description) in columns.items():
-            lines.append(f"| `{column}` | {dtype} | {description} |")
-        lines.append("")
-    with open(md_path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
+    md_path.write_text("\n".join(lines), encoding="utf-8")
     return csv_path, md_path
 
 
-def write_extracts(results: MonitoringResults, out_dir: str) -> dict[str, str]:
-    """Write every CSV extract plus the data dictionary into ``out_dir``.
-
-    Returns a mapping of logical table name to the written file path.
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    tables = build_all_tables(results)
-    written: dict[str, str] = {}
-    for name, (columns, rows) in tables.items():
-        path = os.path.join(out_dir, EXTRACT_FILES[name])
-        write_csv(path, columns, rows)
-        written[name] = path
+def write_extracts(
+    results: pd.DataFrame,
+    bands: pd.DataFrame | None = None,
+    out_dir: Path | None = None,
+) -> dict[str, Path]:
+    """Build and write every extract; return logical name -> path."""
+    out_dir = out_dir or paths.tableau_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, Path] = {}
+    for name, df in build_extracts(results, bands).items():
+        written[name] = write_dataframe_csv(df, out_dir / EXTRACT_FILES[name])
     csv_path, md_path = write_data_dictionary(out_dir)
     written["data_dictionary_csv"] = csv_path
     written["data_dictionary_md"] = md_path
     return written
+
+
+def run(up_to: str | None = None) -> dict[str, Path]:
+    """Load all available monitoring results and write the extracts."""
+    months = available_months(up_to)
+    results = load_results(months)
+    bands = load_scored_bands(months)
+    return write_extracts(results, bands)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="reporting.extracts", description="Write Tableau-ready CSV extracts."
+    )
+    parser.add_argument("--up-to", help="Only include months at or before this YYYY-MM.")
+    parser.add_argument("--out-dir", help=f"Output directory (default {paths.tableau_dir()}).")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    months = available_months(args.up_to)
+    results = load_results(months)
+    bands = load_scored_bands(months)
+    out_dir = Path(args.out_dir) if args.out_dir else paths.tableau_dir()
+    written = write_extracts(results, bands, out_dir)
+    for name, path in written.items():
+        print(f"{name}: {path}")
+
+
+if __name__ == "__main__":
+    main()

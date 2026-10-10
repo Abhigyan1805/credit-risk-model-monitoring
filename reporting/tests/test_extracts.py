@@ -1,81 +1,66 @@
-"""Tests for CSV extract writing and the data dictionary."""
+"""Tests for writing the CSV extracts and the data dictionary."""
 
 import csv
-import json
-import os
 
-import pytest
+import pandas as pd
 
-from reporting.extracts import (
-    DATA_DICTIONARY,
-    EXTRACT_FILES,
-    write_csv,
-    write_data_dictionary,
-    write_extracts,
-)
-from reporting.schema import normalize_results
-
-FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "fixtures", "synthetic_monitoring_results.json"
-)
+from reporting import extracts
+from reporting.data import load_scored_bands
+from reporting.tables import build_extracts
 
 
-@pytest.fixture()
-def results():
-    with open(FIXTURE, "r", encoding="utf-8") as fh:
-        return normalize_results(json.load(fh))
+def _read(path):
+    with open(path, encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
 
 
-def _read_csv(path):
-    with open(path, "r", encoding="utf-8", newline="") as fh:
-        return list(csv.DictReader(fh))
+def test_write_extracts_creates_expected_files(results, crm_data):
+    bands = load_scored_bands(extracts.available_months())
+    written = extracts.write_extracts(results, bands)
+    for name in extracts.EXTRACT_FILES:
+        assert written[name].exists(), name
+    assert written["data_dictionary_csv"].exists()
+    assert written["data_dictionary_md"].exists()
 
 
-def test_write_csv_roundtrip(tmp_path):
-    path = os.path.join(tmp_path, "x.csv")
-    write_csv(path, ["a", "b"], [{"a": 1, "b": 2.5}, {"a": None, "b": 3}])
-    rows = _read_csv(path)
-    assert rows[0]["a"] == "1"
-    assert rows[1]["a"] == ""
-    assert float(rows[0]["b"]) == 2.5
+def test_extract_headers_match_contract(results, crm_data):
+    bands = load_scored_bands(extracts.available_months())
+    written = extracts.write_extracts(results, bands)
+    tables = build_extracts(results, bands)
+    for name, path in written.items():
+        if name.startswith("data_dictionary"):
+            continue
+        rows = _read(path)
+        assert list(rows[0].keys()) == list(tables[name].columns)
 
 
-def test_write_extracts_creates_all_files(results, tmp_path):
-    written = write_extracts(results, str(tmp_path))
-    for name in EXTRACT_FILES:
-        assert os.path.exists(written[name]), name
-    assert os.path.exists(written["data_dictionary_csv"])
-    assert os.path.exists(written["data_dictionary_md"])
-    fact_rows = _read_csv(written["fact"])
-    assert len(fact_rows) == len(results.periods)
-    assert fact_rows[0]["period"]
-
-
-def test_extracts_are_utf8_and_not_empty(results, tmp_path):
-    written = write_extracts(results, str(tmp_path))
-    for path in written.values():
-        assert os.path.getsize(path) > 0
-        with open(path, "r", encoding="utf-8") as fh:
-            assert fh.read(1)
-
-
-def test_data_dictionary_covers_every_column(results, tmp_path):
-    from reporting.tables import build_all_tables
-
-    tables = build_all_tables(results)
-    written = write_extracts(results, str(tmp_path))
-    dictionary = _read_csv(written["data_dictionary_csv"])
+def test_data_dictionary_documents_every_column(results, crm_data):
+    bands = load_scored_bands(extracts.available_months())
+    written = extracts.write_extracts(results, bands)
+    dictionary = _read(written["data_dictionary_csv"])
     documented = {(r["table"], r["column"]) for r in dictionary}
-    for table, (columns, _) in tables.items():
-        for column in columns:
+    for table, df in build_extracts(results, bands).items():
+        for column in df.columns:
             assert (table, column) in documented, f"{table}.{column} undocumented"
 
 
-def test_data_dictionary_markdown(tmp_path):
-    csv_path, md_path = write_data_dictionary(str(tmp_path))
-    with open(md_path, "r", encoding="utf-8") as fh:
-        content = fh.read()
+def test_data_dictionary_markdown(crm_data, tmp_path):
+    _, md_path = extracts.write_data_dictionary(tmp_path)
+    content = md_path.read_text(encoding="utf-8")
     assert "# Data dictionary" in content
-    assert "`monitoring_fact.csv`" not in content  # keyed by logical table name
-    assert "`rag_overall`" in content
-    assert DATA_DICTIONARY["fact"]["psi"][1]
+    assert "`month_date`" in content
+
+
+def test_main_writes_extracts(crm_data, capsys):
+    extracts.main([])
+    out = capsys.readouterr().out
+    assert "monitoring_results:" in out
+    assert (crm_data / "tableau" / "monthly_summary.csv").exists()
+
+
+def test_month_dates_are_iso(results, crm_data):
+    bands = load_scored_bands(extracts.available_months())
+    written = extracts.write_extracts(results, bands)
+    long_rows = _read(written["monitoring_results"])
+    assert long_rows[0]["month_date"].endswith("-01")
+    assert pd.Timestamp(long_rows[0]["month_date"]).day == 1
