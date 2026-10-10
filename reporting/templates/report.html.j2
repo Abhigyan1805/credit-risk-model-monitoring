@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Monitoring Report — {{ latest_month }}</title>
+<style>
+  :root { --ink:#1f2933; --muted:#6b7280; --line:#e4e7eb; --green:#1b8a4b; --amber:#d99100; --red:#c0392b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#f4f6f8; color:var(--ink);
+         font:14px/1.5 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  .page { max-width:1040px; margin:0 auto; background:#fff; padding:32px 40px 64px; }
+  h1 { font-size:23px; margin:0 0 4px; }
+  h2 { font-size:17px; margin:30px 0 10px; border-bottom:2px solid var(--line); padding-bottom:6px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .banner { display:flex; align-items:center; gap:16px; padding:16px 20px; border-radius:10px; color:#fff; margin:14px 0 22px; }
+  .banner .dot { width:20px; height:20px; border-radius:50%; background:rgba(255,255,255,.85); flex:none; }
+  .banner .status { font-size:20px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .kpi { border:1px solid var(--line); border-left:5px solid var(--muted); border-radius:8px; padding:12px 14px; background:#fcfdff; min-width:0; }
+  .kpi .label { color:var(--muted); font-size:12px; min-height:30px; }
+  .kpi .value { font-size:22px; font-weight:700; margin-top:4px; }
+  .kpi .tag { display:inline-block; margin-top:6px; font-size:11px; font-weight:700; text-transform:uppercase; padding:1px 8px; border-radius:999px; color:#fff; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:10px 12px 12px; margin:12px 0; overflow:hidden; }
+  .card img { width:100%; height:auto; display:block; }
+  .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; align-items:start; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px; }
+  th,td { text-align:left; padding:6px 9px; border-bottom:1px solid var(--line); }
+  th { background:#f0f3f7; position:sticky; top:0; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pill { font-size:11px; font-weight:700; text-transform:uppercase; padding:1px 8px; border-radius:999px; color:#fff; }
+  .pill.GREEN{background:var(--green);} .pill.AMBER{background:var(--amber);} .pill.RED{background:var(--red);} .pill.NA{background:var(--muted);}
+  .muted { color:var(--muted); }
+  .breach-RED td:first-child { border-left:4px solid var(--red); }
+  .breach-AMBER td:first-child { border-left:4px solid var(--amber); }
+  .note { background:#f8fafc; border:1px solid var(--line); border-radius:8px; padding:12px 16px; color:var(--muted); font-size:12.5px; }
+  @media print { body{background:#fff;} .page{padding:0;} .card{break-inside:avoid;} }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Model Monitoring Report</h1>
+  <p class="sub">
+    Frozen PD model <strong>{{ model_version }}</strong> · report month <strong>{{ latest_month }}</strong> ·
+    trend window {{ month_min }} … {{ month_max }} ({{ n_months }} months) · generated {{ generated_at }}
+  </p>
+
+  <div class="banner" style="background:{{ overall_color }}">
+    <span class="dot"></span>
+    <div>
+      <div class="status">Overall status: {{ overall_rag }}</div>
+      <div>
+        {% if overall_rag == 'GREEN' %}All monitored metrics within tolerance for {{ latest_month }}.
+        {% elif overall_rag == 'AMBER' %}One or more metrics deteriorating — review required for {{ latest_month }}.
+        {% elif overall_rag == 'RED' %}One or more metrics breached a red threshold — action required for {{ latest_month }}.
+        {% else %}Some metrics are not computable for {{ latest_month }} (outcomes may not yet be observable).{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <h2>1 · Executive summary — headline metrics ({{ latest_month }})</h2>
+  <div class="kpis">
+    {% for kpi in kpis %}
+    <div class="kpi" style="border-left-color:{{ kpi.color }}">
+      <div class="label">{{ kpi.label }}</div>
+      <div class="value">{{ kpi.value }}</div>
+      <span class="tag" style="background:{{ kpi.color }}">{{ kpi.rag }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="note">
+    <strong>RAG rules</strong> (from <code>config/thresholds.yaml</code>):
+    PSI / CSI green &lt; 0.10, amber 0.10–0.25, red ≥ 0.25.
+    Gini / KS are <em>lower-is-worse</em> floors. Calibration ratio amber / red inside ±0.15 / ±0.30 of 1.0.
+    Overall status is the worst metric status for the month. Observed default rate in {{ latest_month }}: {{ default_rate }}.
+    A vintage is monitored on population stability alone until its 36-month outcomes mature.
+  </p>
+
+  <h2>2 · Headline status by month</h2>
+  <div class="card"><img alt="Headline RAG status by month" src="{{ charts.rag_strip }}"></div>
+
+  <h2>3 · Stability — PSI and CSI over time</h2>
+  <div class="card"><img alt="PSI and CSI trend with RAG bands" src="{{ charts.psi_trend }}"></div>
+
+  <h2>4 · Discrimination — Gini / KS over time</h2>
+  <div class="card"><img alt="Gini and KS trend" src="{{ charts.discrimination_trend }}"></div>
+
+  <h2>5 · Calibration by score band ({{ latest_month }})</h2>
+  <div class="grid-2">
+    <div class="card"><img alt="Calibration ratio by band" src="{{ charts.calibration }}"></div>
+    <div>
+      <table>
+        <thead><tr><th>Band</th><th class="num">Calib. ratio</th><th>RAG</th><th class="num">Binom. p</th><th>RAG</th></tr></thead>
+        <tbody>
+        {% for row in calibration_rows %}
+          <tr>
+            <td>{{ row.band }}</td>
+            <td class="num">{{ '%.4f' % row.calibration_ratio if row.calibration_ratio == row.calibration_ratio and row.calibration_ratio is not none else '—' }}</td>
+            <td><span class="pill {{ row.rag_calibration_ratio }}">{{ row.rag_calibration_ratio }}</span></td>
+            <td class="num">{{ '%.4f' % row.binomial_pvalue if row.binomial_pvalue == row.binomial_pvalue and row.binomial_pvalue is not none else '—' }}</td>
+            <td><span class="pill {{ row.rag_binomial_pvalue }}">{{ row.rag_binomial_pvalue }}</span></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="muted">No per-band calibration rows for this month.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h2>6 · Feature stability heat-map (CSI)</h2>
+  <div class="card"><img alt="Feature CSI heat-map" src="{{ charts.csi_heatmap }}"></div>
+
+  <h2>7 · Breaches ({{ breaches | length }} rows, amber/red)</h2>
+  {% if breaches %}
+  <table>
+    <thead><tr><th>Month</th><th>Metric</th><th>Segment</th><th class="num">Value</th><th class="num">Amber</th><th class="num">Red</th><th>Level</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for b in breaches %}
+      <tr class="breach-{{ b.rag }}">
+        <td>{{ b.month }}</td>
+        <td>{{ b.metric }}</td>
+        <td>{{ b.segment }}</td>
+        <td class="num">{{ '%.4g' % b.value if b.value == b.value and b.value is not none else '—' }}</td>
+        <td class="num">{{ '%.4g' % b.amber_threshold if b.amber_threshold == b.amber_threshold and b.amber_threshold is not none else '—' }}</td>
+        <td class="num">{{ '%.4g' % b.red_threshold if b.red_threshold == b.red_threshold and b.red_threshold is not none else '—' }}</td>
+        <td><span class="pill {{ b.rag }}">{{ b.rag }}</span></td>
+        <td>{{ b.message }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No breaches recorded.</p>
+  {% endif %}
+
+  <h2>8 · Monthly summary ({{ n_months }} months)</h2>
+  <table>
+    <thead><tr>
+      <th>Month</th><th class="num">Volume</th><th class="num">Mean PD</th><th class="num">Default rate</th>
+      <th class="num">PSI</th><th class="num">CSI max</th><th class="num">Gini</th><th class="num">KS</th>
+      <th class="num">Calib.</th><th class="num">HL p</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+    {% for r in summary_rows %}
+      <tr>
+        <td>{{ r.month }}</td>
+        <td class="num">{{ r.volume if r.volume == r.volume else '—' }}</td>
+        <td class="num">{{ '%.4f' % r.mean_pd if r.mean_pd == r.mean_pd and r.mean_pd is not none else '—' }}</td>
+        <td class="num">{{ '%.4f' % r.default_rate if r.default_rate == r.default_rate and r.default_rate is not none else '—' }}</td>
+        <td class="num">{{ '%.4f' % r.psi_score if r.psi_score == r.psi_score and r.psi_score is not none else '—' }}</td>
+        <td class="num">{{ '%.4f' % r.csi_max if r.csi_max == r.csi_max and r.csi_max is not none else '—' }}</td>
+        <td class="num">{{ '%.4f' % r.gini if r.gini == r.gini and r.gini is not none else '—' }}</td>
+        <td class="num">{{ '%.4f' % r.ks if r.ks == r.ks and r.ks is not none else '—' }}</td>
+        <td class="num">{{ '%.4f' % r.calibration_ratio if r.calibration_ratio == r.calibration_ratio and r.calibration_ratio is not none else '—' }}</td>
+        <td class="num">{{ '%.3f' % r.hl_pvalue if r.hl_pvalue == r.hl_pvalue and r.hl_pvalue is not none else '—' }}</td>
+        <td><span class="pill {{ r.overall_rag }}">{{ r.overall_rag }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <p class="note" style="margin-top:24px">
+    Generated automatically by <code>reporting.report</code> from
+    <code>data/monitoring/results/</code> and the scored vintages. Tableau
+    extracts and the build guide are in <code>data/tableau/</code> and
+    <code>docs/DASHBOARD_SPEC.md</code>.
+  </p>
+</div>
+</body>
+</html>
