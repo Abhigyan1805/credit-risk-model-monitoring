@@ -18,6 +18,9 @@ Outputs
     Wide table, one row per month with the headline numbers and overall RAG.
 ``calibration_detail``
     One row per (month, score band) with predicted vs observed default rates.
+``alert_summary``
+    One row per month listing which metrics breached (red/amber) and the
+    rolled-up RAG verdict -- the "alert summary per month".
 """
 
 from __future__ import annotations
@@ -330,6 +333,40 @@ def _monitor_month(
     return rows, summary, calib_detail
 
 
+def _metric_label(metric: str, feature: Any) -> str:
+    if isinstance(feature, str) and feature:
+        return f"{metric}[{feature}]"
+    return metric
+
+
+def build_alert_summary(monitoring_results: pd.DataFrame) -> pd.DataFrame:
+    """Per-month alert summary: which metrics breached and the overall RAG.
+
+    Turns the long results table into the one-line-per-month view a monitoring
+    report or an email digest leads with.
+    """
+    rows: list[dict[str, Any]] = []
+    for month, group in monitoring_results.groupby("month", sort=False):
+        reds = group[group["band"] == "red"]
+        ambers = group[group["band"] == "amber"]
+        rows.append(
+            {
+                "month": month,
+                "n_red": int(len(reds)),
+                "n_amber": int(len(ambers)),
+                "red_metrics": "; ".join(
+                    _metric_label(m, f) for m, f in zip(reds["metric"], reds["feature"])
+                ),
+                "amber_metrics": "; ".join(
+                    _metric_label(m, f)
+                    for m, f in zip(ambers["metric"], ambers["feature"])
+                ),
+                "overall_rag": alerts.overall_rag(group["band"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def run_monitoring(
     baseline_snapshot: ModelSnapshot,
     months: dict[str, ModelSnapshot],
@@ -383,4 +420,5 @@ def run_monitoring(
         "monitoring_results": results,
         "monthly_summary": monthly,
         "calibration_detail": calibration_detail,
+        "alert_summary": build_alert_summary(results),
     }

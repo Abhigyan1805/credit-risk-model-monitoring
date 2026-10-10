@@ -25,7 +25,35 @@ def outputs(book):
 
 
 def test_output_keys(outputs):
-    assert set(outputs) == {"monitoring_results", "monthly_summary", "calibration_detail"}
+    assert set(outputs) == {
+        "monitoring_results",
+        "monthly_summary",
+        "calibration_detail",
+        "alert_summary",
+    }
+
+
+def test_alert_summary_one_row_per_month(book, outputs):
+    _, months = book
+    summary = outputs["alert_summary"]
+    assert len(summary) == len(months)
+    assert list(summary.columns) == [
+        "month",
+        "n_red",
+        "n_amber",
+        "red_metrics",
+        "amber_metrics",
+        "overall_rag",
+    ]
+    assert summary["overall_rag"].tolist() == outputs["monthly_summary"]["overall_rag"].tolist()
+
+
+def test_alert_summary_matches_breach_counts(outputs):
+    results = outputs["monitoring_results"]
+    alert = outputs["alert_summary"].set_index("month")
+    for month, group in results.groupby("month"):
+        assert alert.loc[month, "n_red"] == int((group["band"] == "red").sum())
+        assert alert.loc[month, "n_amber"] == int((group["band"] == "amber").sum())
 
 
 def test_monitoring_results_columns(outputs):

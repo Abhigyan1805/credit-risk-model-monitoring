@@ -115,7 +115,7 @@ non-`na` band so one red metric makes the month red.
 
 ## Output tables
 
-`run_monitoring(baseline, months, config)` returns three DataFrames:
+`run_monitoring(baseline, months, config)` returns four DataFrames:
 
 * **`monitoring_results`** (long): `month, metric_group, metric, feature, value,
   baseline_value, band, alert, threshold_ref, details`.
@@ -126,6 +126,9 @@ non-`na` band so one red metric makes the month red.
 * **`calibration_detail`** (long): one row per (month, score band) with `n`,
   `mean_predicted_pd`, `expected_defaults`, `observed_defaults`,
   `observed_default_rate`, `deviation`, `binomial_pvalue`, `band_rag`.
+* **`alert_summary`** (long): one row per month with `n_red`, `n_amber`, the
+  names of the breached metrics (`red_metrics`, `amber_metrics`) and the
+  `overall_rag` verdict — the per-month alert digest.
 
 ## Running it
 
