@@ -1,0 +1,43 @@
+# Monitoring thresholds (data, not code). Owned by builder #3 (monitoring).
+#
+# The engine compares each metric value with amber/red according to `direction`:
+#   higher_worse: GREEN if value < amber;  AMBER if amber <= value < red;  RED if value >= red
+#   lower_worse : GREEN if value > amber;  AMBER if red < value <= amber;  RED if value <= red
+#
+# Metrics can use one of three modes:
+#   absolute (default) - threshold compared directly with the value.
+#   relative_drop      - the Gini/KS lights are driven by *deterioration from the
+#                        development baseline*: drop = (baseline - value) / baseline,
+#                        compared with rel_amber / rel_red. Keeping the absolute levels
+#                        as the primary signal would flag a model that shipped at Gini
+#                        0.331 red every month, so absolute floors are kept only as a
+#                        catastrophic secondary signal (abs_amber / abs_red).
+#   deviation          - calibration_ratio: |value - 1| compared with amber_dev / red_dev
+#                        (two-sided; over- and under-prediction both flag).
+#
+# `auc` is reported as context and has no threshold (its rag is NA).
+
+psi_score: {amber: 0.10, red: 0.25, direction: higher_worse}
+csi: {amber: 0.10, red: 0.25, direction: higher_worse}
+
+# Relative deterioration from the dev baseline (green <10% drop, amber 10-25%, red >25%),
+# with low absolute floors (gini 0.25/0.20, ks 0.15/0.10) as a catastrophic secondary signal.
+gini:
+  mode: relative_drop
+  rel_amber: 0.10
+  rel_red: 0.25
+  abs_amber: 0.25
+  abs_red: 0.20
+  direction: lower_worse
+ks:
+  mode: relative_drop
+  rel_amber: 0.10
+  rel_red: 0.25
+  abs_amber: 0.15
+  abs_red: 0.10
+  direction: lower_worse
+
+hl_pvalue: {amber: 0.05, red: 0.01, direction: lower_worse}
+binomial_pvalue: {amber: 0.05, red: 0.01, direction: lower_worse}
+
+calibration_ratio: {amber_dev: 0.15, red_dev: 0.30, direction: higher_worse}

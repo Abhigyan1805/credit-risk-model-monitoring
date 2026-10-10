@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "credit-risk-model-monitoring"
+version = "0.1.0"
+description = "Automated credit-risk (PD) model monitoring: PSI/CSI, Gini/KS, calibration, RAG alerts, reports and Tableau-ready data"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy==2.5.3",
+    "pandas==3.0.6",
+    "pyarrow==26.0.0",
+    "scikit-learn==1.9.1",
+    "scipy==1.18.1",
+    "matplotlib==3.11.2",
+    "jinja2==3.1.6",
+    "pyyaml==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "ruff==0.17.0"]
+# Airflow is heavy: only needed for `make airflow-test` / the orchestration/ DAG.
+airflow = ["apache-airflow==3.3.2"]
+ingest = ["kaggle"]
+
+# Explicit package list: a flat layout with several top-level packages breaks `pip install -e` otherwise.
+[tool.setuptools]
+packages = ["common", "ingest", "model", "monitoring", "reporting", "orchestration"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "ingest", "model", "monitoring", "reporting", "orchestration"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["data", "airflow_home"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"orchestration/results_doc.py" = ["E501"]
