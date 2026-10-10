@@ -19,8 +19,14 @@ Everything is pure numpy / pandas / scipy so it runs on a small sample and is
 easy to explain line by line in an interview.
 """
 
-from monitoring.calibration import calibration_bands, hosmer_lemeshow
+from monitoring.calibration import (
+    calibration_bands,
+    calibration_by_band,
+    hosmer_lemeshow,
+    hosmer_lemeshow_by_band,
+)
 from monitoring.discrimination import auc, gini, ks
+from monitoring.results import build_monitoring_results
 from monitoring.stability import (
     csi,
     csi_categorical,
@@ -39,7 +45,10 @@ __all__ = [
     "gini",
     "ks",
     "calibration_bands",
+    "calibration_by_band",
     "hosmer_lemeshow",
+    "hosmer_lemeshow_by_band",
+    "build_monitoring_results",
 ]
 
 __version__ = "0.1.0"

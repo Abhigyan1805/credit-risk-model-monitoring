@@ -1,117 +1,115 @@
-"""Traffic-light (red / amber / green) alerting rules.
+"""Traffic-light (GREEN / AMBER / RED / NA) alerting rules.
 
-Each ``band_*`` function turns one metric value into a ``"green"``, ``"amber"``,
-``"red"`` or ``"na"`` label using thresholds from the YAML config. Keeping the
-rules in one tiny module makes the alerting policy auditable and easy to tune:
-a reviewer can read the five functions and know exactly why a month lit up.
+One generic function maps a metric value and its YAML rule to a rag label, so
+the whole alerting policy is auditable in a few lines. ``NA`` means the metric
+could not be computed (e.g. outcomes not yet observable) and is ignored when
+rolling up to the headline ``overall_rag``.
 """
 
 from __future__ import annotations
 
-from typing import Iterable
+import math
+from collections.abc import Iterable
+from typing import Any
 
-from monitoring.config import ThresholdConfig
+GREEN = "GREEN"
+AMBER = "AMBER"
+RED = "RED"
+NA = "NA"
 
-RAG_ORDER = {"green": 0, "amber": 1, "red": 2}
-
-
-def band_psi(value: float, config: ThresholdConfig) -> str:
-    """PSI / CSI band: ``< green_below`` green, ``< amber_below`` amber, else red."""
-    section = config.psi
-    if value < section["green_below"]:
-        return "green"
-    if value < section["amber_below"]:
-        return "amber"
-    return "red"
+_ORDER = {GREEN: 0, AMBER: 1, RED: 2}
+_SCORE = {GREEN: 0.0, AMBER: 1.0, RED: 2.0}
 
 
-def band_csi(value: float, config: ThresholdConfig) -> str:
-    """CSI band (same shape as PSI but its own tunable thresholds)."""
-    section = config.csi
-    if value < section["green_below"]:
-        return "green"
-    if value < section["amber_below"]:
-        return "amber"
-    return "red"
+def _is_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return math.isnan(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
-def band_gini_drop(baseline_gini: float, current_gini: float, config: ThresholdConfig) -> str:
-    """Gini band from the *relative* drop versus the development baseline.
+def _absolute(value: float, amber: float, red: float, direction: str) -> str:
+    if direction == "higher_worse":
+        if value < amber:
+            return GREEN
+        if value < red:
+            return AMBER
+        return RED
+    if value > amber:
+        return GREEN
+    if value > red:
+        return AMBER
+    return RED
 
-    ``rel_drop = (baseline - current) / baseline``. A model whose Gini improves
-    (negative drop) is green; the thresholds widen the band as discrimination
-    decays.
+
+def _primary(value: float, spec: dict[str, Any], baseline: float | None) -> str:
+    if spec.get("mode") == "relative_drop":
+        if _is_missing(baseline) or float(baseline) <= 0:
+            return NA
+        drop = (float(baseline) - value) / float(baseline)
+        if drop < spec["rel_amber"]:
+            return GREEN
+        if drop < spec["rel_red"]:
+            return AMBER
+        return RED
+    if "amber_dev" in spec:  # calibration_ratio: two-sided around 1.0
+        severity = abs(value - 1.0)
+        if severity < spec["amber_dev"]:
+            return GREEN
+        if severity < spec["red_dev"]:
+            return AMBER
+        return RED
+    return _absolute(value, float(spec["amber"]), float(spec["red"]), spec["direction"])
+
+
+def rag(value: Any, spec: dict[str, Any] | None, baseline: float | None = None) -> str:
+    """Map ``value`` to a rag label using ``spec`` from the threshold config.
+
+    ``baseline`` is the development-baseline metric value, required for
+    ``relative_drop`` metrics (Gini / KS). ``spec`` is ``None`` for metrics
+    without a threshold (e.g. ``auc``), which yields ``NA``.
     """
-    if baseline_gini <= 0:
-        return "na"
-    section = config.discrimination["gini"]
-    rel_drop = (baseline_gini - current_gini) / baseline_gini
-    if rel_drop < section["rel_drop_green_below"]:
-        return "green"
-    if rel_drop < section["rel_drop_amber_below"]:
-        return "amber"
-    return "red"
+    if spec is None or _is_missing(value):
+        return NA
+    value = float(value)
+    primary = _primary(value, spec, baseline)
+    if "abs_amber" in spec and "abs_red" in spec:
+        floor = _absolute(value, float(spec["abs_amber"]), float(spec["abs_red"]), "lower_worse")
+        return worst_rag([primary, floor])
+    return primary
 
 
-def band_ks_drop(baseline_ks: float, current_ks: float, config: ThresholdConfig) -> str:
-    """KS band from the *absolute* drop versus the development baseline."""
-    section = config.discrimination["ks"]
-    abs_drop = baseline_ks - current_ks
-    if abs_drop < section["abs_drop_green_below"]:
-        return "green"
-    if abs_drop < section["abs_drop_amber_below"]:
-        return "amber"
-    return "red"
+def thresholds_for(spec: dict[str, Any] | None, baseline: float | None = None) -> tuple[float, float]:
+    """The (amber, red) thresholds to store in the results table (NaN if none).
 
-
-def band_hl_pvalue(p_value: float, config: ThresholdConfig) -> str:
-    """Overall calibration band from the Hosmer-Lemeshow p-value.
-
-    A high p-value means observed and expected agree, so green is the *upper*
-    tail here -- the opposite direction to the stability metrics.
+    For ``relative_drop`` metrics the thresholds are the absolute levels derived
+    from the baseline (``baseline * (1 - rel)``) so they share the value's scale.
     """
-    section = config.calibration["hl"]
-    if p_value >= section["green_pvalue_at_or_above"]:
-        return "green"
-    if p_value >= section["amber_pvalue_at_or_above"]:
-        return "amber"
-    return "red"
+    if not spec:
+        return (float("nan"), float("nan"))
+    if "amber_dev" in spec:
+        return (float(spec["amber_dev"]), float(spec["red_dev"]))
+    if spec.get("mode") == "relative_drop":
+        if _is_missing(baseline) or float(baseline) <= 0:
+            return (float("nan"), float("nan"))
+        base = float(baseline)
+        return (base * (1.0 - spec["rel_amber"]), base * (1.0 - spec["rel_red"]))
+    return (float(spec["amber"]), float(spec["red"]))
 
 
-def band_calibration_band(
-    deviation: float,
-    p_value: float,
-    n: int,
-    config: ThresholdConfig,
-) -> str:
-    """Band for a single score band from its binomial p-value and deviation.
-
-    Bands smaller than ``min_band_size`` are not alerted on (too noisy). The
-    deviation guard fires red/amber even when the binomial test is not yet
-    significant, to catch a band drifting well away from its predicted rate.
-    """
-    section = config.calibration
-    if n < section["binomial"]["min_band_size"]:
-        return "na"
-    if p_value < section["binomial"]["alpha_red"]:
-        return "red"
-    if abs(deviation) >= section["max_band_deviation_red"]:
-        return "red"
-    if p_value < section["binomial"]["alpha_green"]:
-        return "amber"
-    if abs(deviation) >= section["max_band_deviation_amber"]:
-        return "amber"
-    return "green"
-
-
-def overall_rag(bands: Iterable[str]) -> str:
-    """Worst non-``na`` band, so one red metric makes the month red."""
-    worst = "green"
-    seen = False
-    for band in bands:
-        if band not in RAG_ORDER:
+def worst_rag(rags: Iterable[str]) -> str:
+    """Worst non-``NA`` rag among ``rags`` (``NA`` if none are assessable)."""
+    worst: str | None = None
+    for band in rags:
+        if band not in _ORDER:
             continue
-        seen = True
-        if RAG_ORDER[band] > RAG_ORDER[worst]:
+        if worst is None or _ORDER[band] > _ORDER[worst]:
             worst = band
-    return worst if seen else "na"
+    return worst if worst is not None else NA
+
+
+def rag_score(band: str) -> float:
+    """Numeric rag for the ``overall_rag`` row: 0/1/2 for G/A/R, NaN for NA."""
+    return _SCORE.get(band, float("nan"))

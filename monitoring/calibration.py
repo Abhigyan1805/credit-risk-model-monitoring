@@ -138,3 +138,95 @@ def hosmer_lemeshow(
         "n_bands": len(groups),
         "bands": pd.DataFrame(rows),
     }
+
+
+def _groups_from_labels(labels: np.ndarray) -> list[tuple[object, np.ndarray]]:
+    """Split indices by label, preserving the sorted label order."""
+    labels = np.asarray(labels)
+    order = np.argsort(labels, kind="mergesort")
+    sorted_labels = labels[order]
+    return [(label, order[sorted_labels == label]) for label in np.unique(sorted_labels)]
+
+
+def _band_frame(
+    y: np.ndarray,
+    p: np.ndarray,
+    groups: list[tuple[object, np.ndarray]],
+) -> pd.DataFrame:
+    """One row per (label, index) group with counts, rates and test components."""
+    rows = []
+    for label, idx in groups:
+        n = int(idx.size)
+        if n == 0:
+            continue
+        observed = int(y[idx].sum())
+        mean_pred = float(p[idx].mean())
+        expected = n * mean_pred
+        denom = n * mean_pred * (1.0 - mean_pred)
+        rows.append(
+            {
+                "band": label,
+                "n": n,
+                "mean_predicted_pd": mean_pred,
+                "expected_defaults": expected,
+                "observed_defaults": observed,
+                "observed_default_rate": observed / n,
+                "deviation": observed / n - mean_pred,
+                "binomial_pvalue": _binomial_pvalue(observed, n, mean_pred),
+                "chi2_component": (observed - expected) ** 2 / denom if denom > 0 else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def calibration_by_band(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    bands: np.ndarray,
+) -> pd.DataFrame:
+    """Predicted vs observed calibration using *pre-defined* band labels.
+
+    ``bands`` is the model's frozen ``score_band`` (1 safest .. 10 riskiest), so
+    calibration is reported on the same bands the scorecard uses rather than on
+    bands re-derived each month. Returns one row per band present.
+    """
+    y, p = _validate(y_true, y_prob)
+    bands = np.asarray(bands)
+    if bands.shape != y.shape:
+        raise ValueError("bands must be aligned with y_true")
+    return _band_frame(y, p, _groups_from_labels(bands))
+
+
+def hosmer_lemeshow_by_band(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    bands: np.ndarray,
+) -> dict:
+    """Hosmer-Lemeshow statistic using pre-defined band labels.
+
+    Degrees of freedom are ``n_non-empty_bands - 2``. Returns ``NA`` values
+    (NaN) when fewer than three bands are usable.
+    """
+    y, p = _validate(y_true, y_prob)
+    bands = np.asarray(bands)
+    if bands.shape != y.shape:
+        raise ValueError("bands must be aligned with y_true")
+    frame = _band_frame(y, p, _groups_from_labels(bands))
+    usable = frame[frame["chi2_component"].notna()]
+    if len(usable) < 3:
+        return {
+            "statistic": float("nan"),
+            "dof": 0,
+            "p_value": float("nan"),
+            "n_bands": int(len(usable)),
+            "bands": frame,
+        }
+    statistic = float(usable["chi2_component"].sum())
+    dof = int(len(usable) - 2)
+    return {
+        "statistic": statistic,
+        "dof": dof,
+        "p_value": float(chi2.sf(statistic, dof)),
+        "n_bands": int(len(usable)),
+        "bands": frame,
+    }

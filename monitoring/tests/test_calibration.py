@@ -4,18 +4,21 @@ import numpy as np
 import pytest
 from scipy.stats import chi2
 
-from monitoring.calibration import calibration_bands, hosmer_lemeshow
+from monitoring.calibration import (
+    calibration_bands,
+    calibration_by_band,
+    hosmer_lemeshow,
+    hosmer_lemeshow_by_band,
+)
 
 
 def _blocks():
     """Three 100-loan bands with predicted PD 0.1 / 0.2 / 0.3."""
-    scores = np.concatenate(
-        [np.full(100, 0.1), np.full(100, 0.2), np.full(100, 0.3)]
-    )
+    scores = np.concatenate([np.full(100, 0.1), np.full(100, 0.2), np.full(100, 0.3)])
     labels = np.zeros(300, dtype=int)
-    labels[0:20] = 1        # band 0: 20 defaults vs 10 expected  -> component 100/9
-    labels[100:120] = 1     # band 1: 20 defaults vs 20 expected  -> 0
-    labels[200:230] = 1     # band 2: 30 defaults vs 30 expected  -> 0
+    labels[0:20] = 1  # band 0: 20 defaults vs 10 expected  -> component 100/9
+    labels[100:120] = 1  # band 1: 20 defaults vs 20 expected  -> 0
+    labels[200:230] = 1  # band 2: 30 defaults vs 30 expected  -> 0
     return labels, scores
 
 
@@ -31,9 +34,7 @@ def test_hosmer_lemeshow_hand_computed():
 
 def test_hosmer_lemeshow_perfect_calibration():
     # observed equals expected in every band -> statistic 0, p = 1
-    scores = np.concatenate(
-        [np.full(100, 0.1), np.full(100, 0.2), np.full(100, 0.3)]
-    )
+    scores = np.concatenate([np.full(100, 0.1), np.full(100, 0.2), np.full(100, 0.3)])
     labels = np.zeros(300, dtype=int)
     labels[0:10] = 1
     labels[100:120] = 1
@@ -98,3 +99,45 @@ def test_miscalibrated_model_has_low_hl_pvalue():
     y = rng.binomial(1, np.clip(2 * p, 0, 1))
     result = hosmer_lemeshow(y, p, n_bands=10)
     assert result["p_value"] < 0.001
+
+
+def _labelled_blocks():
+    """Three 100-loan bands with explicit score_band labels 1/2/3."""
+    scores = np.concatenate([np.full(100, 0.1), np.full(100, 0.2), np.full(100, 0.3)])
+    bands = np.concatenate([np.full(100, 1), np.full(100, 2), np.full(100, 3)])
+    labels = np.zeros(300, dtype=int)
+    labels[0:20] = 1
+    labels[100:120] = 1
+    labels[200:230] = 1
+    return labels, scores, bands
+
+
+def test_calibration_by_band_groups_by_labels():
+    labels, scores, bands = _labelled_blocks()
+    frame = calibration_by_band(labels, scores, bands)
+    assert frame["band"].tolist() == [1, 2, 3]
+    assert frame["observed_defaults"].tolist() == [20, 20, 30]
+    assert frame["mean_predicted_pd"].tolist() == pytest.approx([0.1, 0.2, 0.3])
+    assert frame.loc[0, "binomial_pvalue"] < 0.05
+    assert frame.loc[1, "binomial_pvalue"] > 0.5
+
+
+def test_hosmer_lemeshow_by_band_hand_computed():
+    labels, scores, bands = _labelled_blocks()
+    result = hosmer_lemeshow_by_band(labels, scores, bands)
+    assert result["statistic"] == pytest.approx(100.0 / 9.0, abs=1e-9)
+    assert result["dof"] == 1
+    assert result["p_value"] < 0.01
+
+
+def test_hosmer_lemeshow_by_band_too_few_bands_is_nan():
+    labels = np.array([0, 1])
+    scores = np.array([0.2, 0.8])
+    bands = np.array([1, 2])
+    result = hosmer_lemeshow_by_band(labels, scores, bands)
+    assert np.isnan(result["p_value"])
+
+
+def test_calibration_by_band_rejects_misaligned():
+    with pytest.raises(ValueError):
+        calibration_by_band([0, 1, 0], [0.1, 0.2, 0.3], [1, 1])
