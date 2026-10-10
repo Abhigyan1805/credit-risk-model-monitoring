@@ -39,3 +39,6 @@ extend-exclude = ["data", "airflow_home"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"orchestration/results_doc.py" = ["E501"]
