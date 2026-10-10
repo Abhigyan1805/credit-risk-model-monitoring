@@ -1,0 +1,8 @@
+# Owned by builder #3 (monitoring). Defaults below follow common banking practice; the engine
+# reads this file. direction = which way is worse.
+psi_score:        {amber: 0.10, red: 0.25, direction: higher_worse}
+csi:              {amber: 0.10, red: 0.25, direction: higher_worse}
+gini:             {amber: 0.40, red: 0.30, direction: lower_worse}   # absolute floor; tune on dev Gini
+ks:               {amber: 0.25, red: 0.20, direction: lower_worse}
+calibration_ratio: {amber_dev: 0.15, red_dev: 0.30, direction: higher_worse}  # |observed/predicted - 1|
+hl_pvalue:        {amber: 0.05, red: 0.01, direction: lower_worse}
