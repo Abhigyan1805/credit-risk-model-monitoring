@@ -146,3 +146,18 @@ def test_audited_false_alarms_stay_fixed(march):
     assert "wrong_status" not in kinds(
         "Interest rate and grade drift may matter, as their CSIs are RED and AMBER.", march
     )
+
+
+def test_audited_false_alarms_from_final_run(march):
+    # Each sentence below is a correct claim the checker wrongly rejected in the audited real run.
+    ok = [
+        "Calibration ratio (observed / predicted default rate) is RED, rising from 1.290 to 1.381.",
+        "The observed default rate rose, leading to a rising calibration ratio.",
+        "Interest rate and grade likely cause the deterioration in the model's performance.",
+        "Interest rate CSI is RED, indicating a significant deterioration.",
+        "Score PSI is AMBER after being AMBER last month.",
+        "The model is in RED status overall, with alerts for CSI interest rate and the calibration ratio.",
+    ]
+    for text in ok:
+        found = [k for k in kinds(text, march) if k != "omission"]
+        assert found == [], (text, check(text, march).feedback())

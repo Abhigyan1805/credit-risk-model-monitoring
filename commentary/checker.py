@@ -85,18 +85,19 @@ _METRIC_PATTERNS: list[tuple[str, str | None, str]] = [
     ),
     ("binomial_pvalue", None, r"\bbinomial(?: calibration)?(?: tests?)?(?: p-?values?)?"),
     (
+        "calibration_ratio",
+        "ALL",
+        r"\b(?:re)?calibration ratio\b(?:\s*\(observed\s*/\s*predicted default rate\))?"
+        r"|\bobserved[- ]to[- ]predicted(?: default rate)?(?: ratio)?|observed\s*/\s*predicted(?: default rate)?(?: ratio)?"
+        r"|\bo/e(?: ratio)?\b|\bobserved\s*/\s*calibrated(?: ratio)?|\bcalibration\b",
+    ),
+    (
         "mean_pd",
         "ALL",
         r"\b(?:mean|average) (?:predicted )?(?:pd|probability of default)\b|\bmean pd\b"
         r"|\bpredicted (?:default rate|pd)\b|\b(?:mean|average) predicted default rate\b",
     ),
     ("default_rate", "ALL", r"\b(?:observed |actual |realised |realized )?(?:default|bad) rate\b"),
-    (
-        "calibration_ratio",
-        "ALL",
-        r"\b(?:re)?calibration ratio\b|\bobserved[- ]to[- ]predicted(?: ratio)?|observed\s*/\s*predicted(?: ratio)?"
-        r"|\bo/e(?: ratio)?\b|\bobserved\s*/\s*calibrated(?: ratio)?|\bcalibration\b",
-    ),
     ("psi_score", "ALL", r"\b(?:score )?psi\b|\bpopulation stability(?: index)?\b"),
     (
         "csi",
@@ -112,7 +113,7 @@ _METRIC_PATTERNS: list[tuple[str, str | None, str]] = [
         "overall_rag",
         "ALL",
         r"\boverall (?:status|rag|rating|health|model status|model health)\b|\bheadline status\b"
-        r"|\bmodel status\b|\boverall\b(?= (?:is|was|remains|remained|stays|stayed)\b)",
+        r"|\bmodel status\b|\bstatus overall\b|\boverall\b(?= (?:is|was|remains|remained|stays|stayed)\b)",
     ),
 ]
 _FEATURE_PATTERNS: dict[str, str] = {
@@ -207,6 +208,14 @@ _BETTER = r"improved|improving|improves|improvement|strengthened|recovered|recov
 _FLAT = r"stable|unchanged|flat|steady|held steady|broadly stable|little changed"
 _DIRECTION = re.compile(rf"\b({_UP}|{_DOWN}|{_WORSE}|{_BETTER}|{_FLAT})\b", _FLAGS)
 _DIR_CLASS = [("up", _UP), ("down", _DOWN), ("worse", _WORSE), ("better", _BETTER), ("flat", _FLAT)]
+_JUDGEMENT_BEFORE = re.compile(
+    r"(?:\bindicat\w*|\bsuggest\w*|\bsignal\w*|\bperformance\s+to|\balerts?\s+(?:have\s+)?(?:remain(?:ed)?|are|stay(?:ed)?))"
+    r"\s+(?:a\s+|an\s+)?(?:\w+\s+)?$",
+    _FLAGS,
+)
+_JUDGEMENT_AFTER = re.compile(
+    r"\s*(?:in|of)?\s*(?:the\s+)?(?:model'?s?\s+)?(?:overall\s+)?performance\b", _FLAGS
+)
 _UNAVAILABLE = re.compile(
     r"\b(?:not (?:yet )?(?:available|observable|computable|computed|assessable|measurable|assessed)"
     r"|unavailable|n/a|cannot (?:yet )?be (?:computed|assessed|measured)|not yet matured|immature)\b",
@@ -573,6 +582,10 @@ class Checker:
             cls = next(c for c, pat in _DIR_CLASS if re.fullmatch(pat, word))
             if _NEGATION.search(s[max(0, m.start() - 25) : m.start()]):
                 continue
+            if _JUDGEMENT_BEFORE.search(s[max(0, m.start() - 40) : m.start()]) or _JUDGEMENT_AFTER.match(
+                s[m.end() :]
+            ):
+                continue  # about "the model's performance" or an interpretation, not a metric's monthly move
             items.append(_Item(m.start(), m.end(), "direction", m.group(0), {"cls": cls}))
         for m in _UNAVAILABLE.finditer(s):
             items.append(_Item(m.start(), m.end(), "unavailable", m.group(0), {}))
@@ -606,6 +619,10 @@ class Checker:
     @staticmethod
     def _attach(item: _Item, groups: list[_Mention], clauses: list[tuple[int, int]]) -> _Mention | None:
         clause = next((c for c in clauses if c[0] <= item.start <= c[1]), clauses[-1])
+        if item.kind == "direction":
+            adjacent = [g for g in groups if 0 <= g.start - item.end <= 2]
+            if adjacent:
+                return adjacent[0]
         before = [g for g in groups if g.end <= item.start and g.start >= clause[0]]
         if before:
             return before[-1]
@@ -764,8 +781,8 @@ class Checker:
         before = s[max(0, item.start - 25) : item.start].lower()
         after = s[item.end : item.end + 30].lower()
         use_prev = bool(
-            re.search(r"\bfrom\s*$|\bpreviously\s*$|\bwas\s*$|\blast month\b.*$", before)
-            or re.match(r"\s*(?:in|the|last)?\s*(?:the )?(?:previous|prior|last) month", after)
+            re.search(r"\bfrom\s*$|\bpreviously\s*$|\bwas\s*$|\bafter being\s*$|\blast month\b.*$", before)
+            or re.match(r"\s*(?:status\s+)?(?:in|the|last)?\s*(?:the )?(?:previous|prior|last) month", after)
         )
         if not facts:
             overall = self.facts.get("overall_rag")

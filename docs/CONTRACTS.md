@@ -63,6 +63,9 @@ headline status shown on the dashboard.
 
 ## 6. Reporting outputs (reporting)
 * `data/reports/monitoring_report_<YYYY-MM>.html` -- self-contained monthly report (embedded charts).
+* `data/commentary/month=<YYYY-MM>.json` (written by `python -m commentary.run --month M`, read by the report) --
+  published commentary text, path taken (`llm_first_pass | llm_after_retry | template_fallback | template_only`),
+  every draft with its checker findings, model id/settings, timings. See `docs/AI_COMMENTARY.md`.
 * `data/tableau/*.csv` -- flat extracts for Tableau Public (CSV, UTF-8, ISO dates `YYYY-MM-01`): at minimum
   `monitoring_results.csv` (the long table + `month_date`), `monthly_summary.csv` (one row per month wide),
   `score_distribution.csv` (month x band share), `csi_by_feature.csv`, `calibration_by_band.csv`.

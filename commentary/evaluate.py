@@ -298,6 +298,11 @@ def evaluate(months: list[str] | None = None, seed: int = SEED) -> dict:
     per_month = [r["generation_seconds"] for r in llm]
     published_llm = [r for r in records if r["path"].startswith("llm")]
 
+    # the same logged drafts re-checked with the current checker (it changed after the run's audit)
+    recheck = [[check(a["draft"], facts[r["month"]]).passed for a in r["attempts"]] for r in llm]
+    recheck_first = sum(rc[0] for rc in recheck)
+    recheck_any = sum(any(rc) for rc in recheck)
+
     # checker on corrupted drafts
     clean_sources = [("template", m, template_commentary(facts[m])) for m in months]
     clean_sources += [("llm", r["month"], r["text"]) for r in published_llm]
@@ -335,6 +340,8 @@ def evaluate(months: list[str] | None = None, seed: int = SEED) -> dict:
         "first_drafts_with_issue_kind": dict(first_drafts_with.most_common()),
         "all_attempt_issue_counts": dict(all_kinds.most_common()),
         "attempts_total": sum(len(r["attempts"]) for r in llm),
+        "recheck_first_draft_pass": recheck_first,
+        "recheck_months_with_a_passing_draft": recheck_any,
         "seconds_per_attempt_median": round(statistics.median(gen), 1) if gen else None,
         "seconds_per_attempt_max": round(max(gen), 1) if gen else None,
         "seconds_per_month_median": round(statistics.median(per_month), 1) if per_month else None,
@@ -380,6 +387,8 @@ def render(s: dict) -> str:
         f"| published: LLM, after checker feedback (max 2 retries) | {_pct(pc.get('llm_after_retry', 0), n)} |",
         f"| published: deterministic template fallback | {_pct(pc.get('template_fallback', 0), n)} |",
         f"| LLM drafts generated in total | {s['attempts_total']} |",
+        f"| same drafts re-checked with the current checker: first drafts passing | {_pct(s['recheck_first_draft_pass'], nl)} |",
+        f"| same drafts re-checked: months with at least one passing draft | {_pct(s['recheck_months_with_a_passing_draft'], nl)} |",
         f"| generation time per draft, median / max | {s['seconds_per_attempt_median']} s / "
         f"{s['seconds_per_attempt_max']} s |",
         f"| time per month incl. retries, median / mean | {s['seconds_per_month_median']} s / "
