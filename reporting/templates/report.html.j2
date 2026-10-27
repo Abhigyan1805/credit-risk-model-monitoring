@@ -34,6 +34,14 @@
   .breach-RED td:first-child { border-left:4px solid var(--red); }
   .breach-AMBER td:first-child { border-left:4px solid var(--amber); }
   .note { background:#f8fafc; border:1px solid var(--line); border-radius:8px; padding:12px 16px; color:var(--muted); font-size:12.5px; }
+  .commentary { border:1px solid var(--line); border-left:5px solid #4f46e5; border-radius:10px; padding:14px 18px; margin:0 0 18px; background:#fafaff; }
+  .commentary.tpl { border-left-color:var(--muted); background:#fbfbfb; }
+  .commentary-head { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .ai-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 9px; border-radius:999px; color:#fff; background:#4f46e5; }
+  .commentary.tpl .ai-label { background:var(--muted); }
+  .commentary p { margin:6px 0; }
+  .commentary-meta { color:var(--muted); font-size:12px; }
+  .commentary details { font-size:12px; color:var(--muted); }
   @media print { body{background:#fff;} .page{padding:0;} .card{break-inside:avoid;} }
 </style>
 </head>
@@ -57,6 +65,28 @@
       </div>
     </div>
   </div>
+
+  {% if commentary %}
+  <section class="commentary {{ 'ai' if commentary.is_llm else 'tpl' }}">
+    <div class="commentary-head">
+      <span class="ai-label">{{ 'AI-drafted, verified' if commentary.is_llm else 'Template summary, verified' }}</span>
+      <strong>Monitoring commentary — {{ latest_month }}</strong>
+    </div>
+    {% for p in commentary.paragraphs %}<p>{{ p }}</p>{% endfor %}
+    <p class="commentary-meta">
+      {{ commentary.path_text }}
+      {% if commentary.is_llm or commentary.n_attempts %}Model <code>{{ commentary.model }}</code>{% if commentary.quantization %} ({{ commentary.quantization }}){% endif %}, run locally; {{ commentary.n_attempts }} draft(s).{% endif %}
+      {{ commentary.n_claims }} claims (numbers, statuses, directions, months) checked against this month's results by
+      <code>commentary.checker</code>; anything unsupported blocks publication. Generated {{ commentary.generated_at }}.
+      The commentary is decision support for the model-risk reviewer, not a substitute for review.
+    </p>
+    {% if commentary.rejected_issues %}
+    <details><summary>Checker findings on rejected drafts ({{ commentary.rejected_issues | length }})</summary>
+      <ul>{% for i in commentary.rejected_issues %}<li><code>{{ i.kind }}</code> “{{ i.claim }}” — {{ i.detail }}</li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+  </section>
+  {% endif %}
 
   <h2>1 · Executive summary — headline metrics ({{ latest_month }})</h2>
   <div class="kpis">
