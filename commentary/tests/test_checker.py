@@ -120,3 +120,9 @@ def test_band_lists_each_keep_their_own_status(march):
 def test_missing_paragraph_is_an_omission(march):
     found = check(GOOD_MARCH.split("\n\nRecommended action:")[0], march)
     assert [i.claim for i in found.issues] == ["Recommended action"]
+
+
+def test_from_to_order(march):
+    assert "wrong_number" not in kinds("Score PSI rose from 0.151 to 0.183.", march)
+    assert "wrong_number" in kinds("Score PSI rose from 0.183 to 0.151.", march)
+    assert "wrong_status" in kinds("The calibration ratio is in the green zone.", march)

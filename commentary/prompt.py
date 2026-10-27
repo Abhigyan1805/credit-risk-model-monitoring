@@ -10,17 +10,21 @@ SYSTEM = (
     "and you only state facts that appear in the fact sheet you are given."
 )
 
-RULES = """Write the commentary as exactly four short paragraphs, each starting with its label:
-What changed: / Alerts: / Likely drivers: / Recommended action:
+RULES = """Write the commentary as exactly four short paragraphs, each starting with its label, in this order:
+What changed: ...
+Alerts: ...
+Likely drivers: ...
+Recommended action: ...
+All four paragraphs are required; the commentary is rejected if "Recommended action:" is missing.
 
 Rules (a checker verifies every claim and rejects the draft if any rule is broken):
 1. Use only numbers that appear in the fact sheet, copied at the precision shown. Do not compute new numbers, percentages or differences.
 2. Refer to the month as {month}; the only other month you may name is the previous month {prev}.
-3. Use "rose"/"fell" (or "improved"/"deteriorated") only as given in the "change vs previous month" column.
+3. Use "rose"/"fell" (or "improved"/"deteriorated") only as given in the "change vs previous month" column. If it says "no previous month", do not describe any change or compare with last month.
 4. State RAG statuses in capitals (GREEN, AMBER, RED) exactly as given. Do not give a status to a metric that has none.
 5. Mention only the metrics and features listed in the fact sheet. Metrics shown as n/a are not available this month: do not give them a value.
 6. In "Likely drivers", name only features whose CSI is AMBER or RED or that are listed as the top drifting features, and say "likely" or "may" (drift is evidence, not proof).
-7. Keep it under 170 words. No headings, no bullet lists, no markdown."""
+7. Keep it under 170 words; focus on the alerts rather than listing every metric. No headings, no bullet lists, no markdown."""
 
 
 def _direction_word(f) -> str:

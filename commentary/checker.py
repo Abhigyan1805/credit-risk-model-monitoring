@@ -181,7 +181,7 @@ _THRESHOLD_CMP = re.compile(
     _FLAGS,
 )
 _THRESHOLD_REF = re.compile(
-    r"\b(red|amber|green)\s+(?:thresholds?|limits?|levels?|triggers?|lines?|zone)", _FLAGS
+    r"\b(red|amber|green)\s+(?:thresholds?|limits?|levels?|triggers?|lines?)", _FLAGS
 )
 _WITHIN = re.compile(r"\bwithin (?:tolerance|limits|thresholds|appetite)\b", _FLAGS)
 _BREACH = re.compile(r"\bbreach(?:es|ed)?\b|\bbreaching\b", _FLAGS)
@@ -585,6 +585,7 @@ class Checker:
                         "percent": bool(pct),
                         "approx": bool(_APPROX.search(s[max(0, m.start() - 20) : m.start()])),
                         "cmp": (cmp.group(1) or cmp.group(2)) if cmp else None,
+                        "role": _from_to_role(s, m.start()),
                     },
                 )
             )
@@ -703,6 +704,10 @@ class Checker:
         result.issues.append(Issue("wrong_number", item.text, f"the results show {truth}"))
 
     def _candidates(self, facts: list[MetricFact], clause: str, d: dict) -> list[float]:
+        if d.get("role") == "from":  # "from X to Y": X is last month's value
+            return [f.prev for f in facts if f.prev is not None]
+        if d.get("role") == "to":
+            return [f.value for f in facts if f.available]
         cands: list[float] = []
         prev_ctx = _PREV_CONTEXT.search(clause) or (self.facts.prev_month and self.facts.prev_month in clause)
         thr_ctx = _THRESHOLD_CONTEXT.search(clause)
@@ -901,6 +906,16 @@ class Checker:
                     f"the most drifted feature ({_name(red_csi[0])}, RED) is not mentioned",
                 )
             )
+
+
+def _from_to_role(s: str, pos: int) -> str | None:
+    """'from' / 'to' when the number sits in a 'from X to Y' change phrase, else None."""
+    before = s[max(0, pos - 60) : pos].lower()
+    if re.search(r"\bfrom\s*$", before):
+        return "from" if re.match(r"[\d.,%\s]*\bto\b", s[pos:]) else None
+    if re.search(r"\bfrom\s+[\d.,]+%?\s+to\s*$", before):
+        return "to"
+    return None
 
 
 def _name(f: MetricFact) -> str:
