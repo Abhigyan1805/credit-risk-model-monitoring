@@ -213,7 +213,7 @@ def fmt(value: float | None, metric: str) -> str:
     if metric == "volume":
         return f"{value:,.0f}"
     if metric in ("hl_pvalue", "binomial_pvalue"):
-        return f"{value:.3g}" if value >= 0.001 else f"{value:.1e}"
+        return f"{value:.3g}" if value >= 0.001 else "< 0.001"
     return f"{value:.3f}"
 
 

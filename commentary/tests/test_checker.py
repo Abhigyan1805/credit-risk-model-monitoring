@@ -102,3 +102,10 @@ def test_unavailable_outcome_metrics():
 def test_unattributed_number_and_unknown_acronym(march):
     assert "unsupported_number" in kinds("Overall status is RED; 0.777 of loans were affected.", march)
     assert "invented_metric" in kinds("The LGD rose this month.", march)
+
+
+def test_small_p_values(march):
+    assert "wrong_number" not in kinds("The Hosmer-Lemeshow p-value is < 0.001 (RED).", march)
+    assert "wrong_number" not in kinds("The Hosmer-Lemeshow p-value is 1.2e-4 (RED).", march)
+    assert "wrong_number" in kinds("The Hosmer-Lemeshow p-value is 3.2e-4 (RED).", march)
+    assert "wrong_number" in kinds("The Hosmer-Lemeshow p-value is > 0.05 (RED).", march)

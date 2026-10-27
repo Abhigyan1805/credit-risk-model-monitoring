@@ -9,6 +9,7 @@ settings are recorded in every commentary JSON and in ``docs/AI_COMMENTARY.md``.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Protocol
 
 DEFAULT_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
@@ -41,6 +42,11 @@ class HFDrafter:
 
         self.cfg = settings or HFSettings()
         self.name = self.cfg.model_id
+        self.revision = None
+        local = Path(self.cfg.model_id)
+        if (local / "HF_ID").exists():  # a pre-downloaded snapshot: record where it came from
+            self.name = (local / "HF_ID").read_text().strip()
+            self.revision = (local / "REVISION").read_text().strip() if (local / "REVISION").exists() else None
         torch.manual_seed(self.cfg.seed)
         kwargs: dict = {}
         if self.cfg.quantization == "nf4":
@@ -80,9 +86,17 @@ class HFDrafter:
 
         return {
             **asdict(self.cfg),
+            "model_id": self.name,
+            "loaded_from": self.cfg.model_id,
+            "revision": self.revision,
+            "device": torch_device_name(self._torch),
             "transformers": transformers.__version__,
             "torch": self._torch.__version__,
         }
+
+
+def torch_device_name(torch) -> str:
+    return torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
 
 
 class ScriptedDrafter:

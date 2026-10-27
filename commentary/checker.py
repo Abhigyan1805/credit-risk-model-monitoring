@@ -11,7 +11,7 @@ and verifies it against :class:`commentary.facts.MonthFacts`.
 Tolerances (explicit, see ``docs/AI_COMMENTARY.md``):
 
 * a number must equal a true value correctly rounded to the precision written: ``|claimed - true|
-  <= 0.5 * 10**-decimals`` (percent claims are compared on the percent scale); "about"/"around"
+  <= 0.5 * 10**-decimals`` (scientific notation: half a unit of the last mantissa digit) (percent claims are compared on the percent scale); "about"/"around"
   widens this to 2% of the true value;
 * "stable"/"unchanged" needs ``|change| <= max(0.005, 2% of last month)``; "rose"/"fell" needs the sign
   of the change to match; "improved"/"deteriorated" uses the metric's risk direction (for the
@@ -155,7 +155,8 @@ _BARE_MONTH = re.compile(
 _YEAR = re.compile(r"\b(20\d\d)\b")
 
 _NUMBER = re.compile(
-    r"(?<![\w.=/-])([-+−]?)(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s*(?:%|per ?cent\b|percentage points?\b|pp\b))?"
+    r"(?<![\w.=/-])([-+−]?)(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:[eE]([-+−]?\d+))?"
+    r"(\s*(?:%|per ?cent\b|percentage points?\b|pp\b))?"
 )
 _BANDS = re.compile(
     r"\b(?:score )?bands?\s*=?\s*(\d+(?:\s*(?:,|and|&|to|-|–|or)\s*(?:band\s*)?\d+)*)", _FLAGS
@@ -187,8 +188,8 @@ _BASELINE_CMP = re.compile(
     r"\b(above|over|below|under)\s+(?:the |its )?(?:development |dev )?baseline\b", _FLAGS
 )
 _NUM_CMP = re.compile(
-    r"\b(above|over|exceed(?:s|ed|ing)?|beyond|more than|greater than|higher than|below|under|less than|lower than)"
-    r"\s+(?:the |a |its )?(?:level of |value of )?$",
+    r"(?:\b(above|over|exceed(?:s|ed|ing)?|beyond|more than|greater than|higher than|below|under|less than|lower than)"
+    r"|(<=|>=|<|>|≤|≥))\s*(?:the |a |its )?(?:level of |value of )?$",
     _FLAGS,
 )
 _UP = r"rose|risen|rises|rise|rising|increased|increases|increase|increasing|climbed|grew|jumped|edged up|went up|ticked up"
@@ -564,8 +565,10 @@ class Checker:
                 continue
             if _CONSTANT_UNIT.match(s[m.end() :]):
                 continue
-            sign, whole, frac, pct = m.group(1), m.group(2), m.group(3) or "", m.group(4)
-            value = float(whole.replace(",", "") + frac)
+            sign, whole, frac, exp, pct = m.group(1), m.group(2), m.group(3) or "", m.group(4), m.group(5)
+            power = int(exp.replace("−", "-")) if exp else 0
+            value = float(whole.replace(",", "") + frac) * 10.0**power
+            cmp = _NUM_CMP.search(s[max(0, m.start() - 40) : m.start()])
             items.append(
                 _Item(
                     m.start(),
@@ -574,10 +577,10 @@ class Checker:
                     m.group(0).strip(),
                     {
                         "value": -value if sign in ("-", "−") else value,
-                        "decimals": max(len(frac) - 1, 0),
+                        "tol": 0.5 * 10.0 ** (power - max(len(frac) - 1, 0)) + 1e-12,
                         "percent": bool(pct),
                         "approx": bool(_APPROX.search(s[max(0, m.start() - 20) : m.start()])),
-                        "cmp": (_NUM_CMP.search(s[max(0, m.start() - 40) : m.start()]) or [None, None])[1],
+                        "cmp": (cmp.group(1) or cmp.group(2)) if cmp else None,
                     },
                 )
             )
@@ -658,7 +661,7 @@ class Checker:
         d = item.data
         if d["cmp"]:
             cmp_word = d["cmp"].lower()
-            above = cmp_word.startswith(("above", "over", "exceed", "beyond", "more", "greater", "higher"))
+            above = cmp_word.startswith(("above", "over", "exceed", "beyond", "more", "greater", "higher", ">", "≥"))
             claimed = (
                 d["value"] / 100
                 if d["percent"] and all(f.metric not in ("volume",) for f in facts)
@@ -906,7 +909,7 @@ def _fmt(x: float | None) -> str:
 
 def _matches(d: dict, truth: float) -> bool:
     claimed = abs(d["value"])
-    tol = 0.5 * 10 ** (-d["decimals"]) + 1e-9
+    tol = d["tol"]
     targets = [abs(truth) * 100] if d["percent"] else [abs(truth)]
     if d["percent"] and abs(truth) > 1.5:
         targets.append(abs(truth))  # already on a percent-like scale
