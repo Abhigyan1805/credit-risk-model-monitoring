@@ -67,7 +67,7 @@ def draft_commentary(
     if drafter is not None:
         for i in range(max_retries + 1):
             t0 = time.perf_counter()
-            draft = drafter.generate(build_messages(facts, history))
+            draft = drafter.generate(build_messages(facts, history), attempt=i)
             gen = time.perf_counter() - t0
             result = check(draft, facts)
             attempts.append(Attempt(draft, result.passed, _issues(result), result.n_claims, round(gen, 2)))

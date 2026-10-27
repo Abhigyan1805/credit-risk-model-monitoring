@@ -25,13 +25,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from common import paths
-from common.config import monitor_months
-from common.paths import REPO_ROOT
 from commentary.checker import check
 from commentary.facts import FEATURE_LABELS, MonthFacts, feature_label, fmt, load_facts
 from commentary.run import load_commentary
 from commentary.template import template_commentary
+from common import paths
+from common.config import monitor_months
+from common.paths import REPO_ROOT
 
 DOC = REPO_ROOT / "docs" / "AI_COMMENTARY.md"
 START, END = "<!-- eval:start -->", "<!-- eval:end -->"
@@ -192,7 +192,7 @@ CORRUPTIONS = {
 
 def alt_phrasing(facts: MonthFacts) -> str:
     """A second, independently worded correct commentary (for the checker's false-alarm rate)."""
-    m, prev = facts.month, facts.prev_month
+    m = facts.month
     parts = [f"What changed: The model's overall status for {m} is {facts.overall_rag}."]
     psi = facts.get("psi_score")
     if psi and psi.available:
@@ -209,7 +209,9 @@ def alt_phrasing(facts: MonthFacts) -> str:
             parts.append(f"{label} is {f.value:.2f}, {f.rag}.")
     cal = facts.get("calibration_ratio")
     if cal and cal.available:
-        parts.append(f"Observed defaults run at {cal.value:.2f} times the predicted level, so calibration is {cal.rag}.")
+        parts.append(
+            f"Observed defaults run at {cal.value:.2f} times the predicted level, so calibration is {cal.rag}."
+        )
     dr = facts.get("default_rate")
     if dr and dr.available:
         parts.append(f"The observed default rate was {dr.value * 100:.1f}%.")
@@ -266,7 +268,9 @@ def independent_audit(text: str, month: str) -> list[str]:
         if mm not in (month, prev_m):
             findings.append(f"month {mm}")
     has_alerts = cur["rag"].isin(["AMBER", "RED"]).any()
-    if has_alerts and re.search(r"\bno (?:headline )?alerts\b|\ball (?:headline )?metrics are green", text, re.I):
+    if has_alerts and re.search(
+        r"\bno (?:headline )?alerts\b|\ball (?:headline )?metrics are green", text, re.I
+    ):
         findings.append("all-clear claim with alerts present")
     return findings
 
@@ -306,7 +310,9 @@ def evaluate(months: list[str] | None = None, seed: int = SEED) -> dict:
             if bad is None or bad == text:
                 continue
             result = check(bad, facts[m])
-            corrupt_rows.append({"source": source, "month": m, "corruption": name, "caught": not result.passed})
+            corrupt_rows.append(
+                {"source": source, "month": m, "corruption": name, "caught": not result.passed}
+            )
     cdf = pd.DataFrame(corrupt_rows)
     recall = cdf.groupby("corruption")["caught"].agg(["mean", "size"]) if len(cdf) else pd.DataFrame()
 

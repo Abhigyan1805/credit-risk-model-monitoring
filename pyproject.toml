@@ -53,4 +53,5 @@ select = ["E", "F", "I", "B", "UP"]
 "commentary/checker.py" = ["E501"]
 # Prompt rules and hand-written test drafts are prose.
 "commentary/prompt.py" = ["E501"]
+"commentary/evaluate.py" = ["E501"]
 "commentary/tests/*.py" = ["E501"]

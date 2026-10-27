@@ -93,10 +93,15 @@ _METRIC_PATTERNS: list[tuple[str, str | None, str]] = [
         "calibration_ratio",
         "ALL",
         r"\bcalibration ratio\b|\bobserved[- ]to[- ]predicted(?: ratio)?|observed\s*/\s*predicted(?: ratio)?"
-        r"|\bo/e(?: ratio)?\b|\bcalibration\b",
+        r"|\bo/e(?: ratio)?\b|\bobserved\s*/\s*calibrated(?: ratio)?|\bcalibration\b",
     ),
     ("psi_score", "ALL", r"\b(?:score )?psi\b|\bpopulation stability(?: index)?\b"),
-    ("csi", None, r"\bcsi\b|\bcharacteristic stability(?: index)?\b"),
+    (
+        "csi",
+        None,
+        r"\b(?:all )?(?:other|remaining) (?:features|characteristics|variables)\b|\bcsi\b"
+        r"|\bcharacteristic stability(?: index)?\b",
+    ),
     ("gini", "ALL", r"\bgini(?: coefficient)?\b"),
     ("ks", "ALL", r"\bks\b(?: statistic)?|\bkolmogorov[- ]smirnov\b"),
     ("auc", "ALL", r"\bauc\b|\barea under the (?:roc )?curve\b"),
@@ -180,9 +185,7 @@ _THRESHOLD_CMP = re.compile(
     r"(?:the |its |their |both )?(?:respective )?(red|amber)\s+(?:thresholds?|limits?|levels?|triggers?|lines?)",
     _FLAGS,
 )
-_THRESHOLD_REF = re.compile(
-    r"\b(red|amber|green)\s+(?:thresholds?|limits?|levels?|triggers?|lines?)", _FLAGS
-)
+_THRESHOLD_REF = re.compile(r"\b(red|amber|green)\s+(?:thresholds?|limits?|levels?|triggers?|lines?)", _FLAGS)
 _WITHIN = re.compile(r"\bwithin (?:tolerance|limits|thresholds|appetite)\b", _FLAGS)
 _BREACH = re.compile(r"\bbreach(?:es|ed)?\b|\bbreaching\b", _FLAGS)
 _BASELINE_CMP = re.compile(
@@ -666,7 +669,9 @@ class Checker:
         d = item.data
         if d["cmp"]:
             cmp_word = d["cmp"].lower()
-            above = cmp_word.startswith(("above", "over", "exceed", "beyond", "more", "greater", "higher", ">", "≥"))
+            above = cmp_word.startswith(
+                ("above", "over", "exceed", "beyond", "more", "greater", "higher", ">", "≥")
+            )
             claimed = (
                 d["value"] / 100
                 if d["percent"] and all(f.metric not in ("volume",) for f in facts)

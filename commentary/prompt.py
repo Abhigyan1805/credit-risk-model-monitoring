@@ -20,80 +20,81 @@ All four paragraphs are required; the commentary is rejected if "Recommended act
 Rules (a checker verifies every claim and rejects the draft if any rule is broken):
 1. Use only numbers that appear in the fact sheet, copied at the precision shown. Do not compute new numbers, percentages or differences.
 2. Refer to the month as {month}; the only other month you may name is the previous month {prev}.
-3. Use "rose"/"fell" (or "improved"/"deteriorated") only as given in the "change vs previous month" column. If it says "no previous month", do not describe any change or compare with last month.
+3. Use "rose"/"fell" (or "improved"/"deteriorated") only exactly as stated in the fact sheet ("so it rose ..."). If there is no previous month, do not describe any change.
 4. State RAG statuses in capitals (GREEN, AMBER, RED) exactly as given. Do not give a status to a metric that has none.
-5. Mention only the metrics and features listed in the fact sheet. Metrics shown as n/a are not available this month: do not give them a value.
+5. Mention only the metrics and features listed in the fact sheet. Metrics that are not available this month must not be given a value or a status.
 6. In "Likely drivers", name only features whose CSI is AMBER or RED or that are listed as the top drifting features, and say "likely" or "may" (drift is evidence, not proof).
-7. Keep it under 170 words; focus on the alerts rather than listing every metric. No headings, no bullet lists, no markdown."""
+7. Keep it under 150 words; focus on the alerts rather than listing every metric. No headings, no bullet lists, no markdown."""
 
 
-def _direction_word(f) -> str:
-    if f.delta is None:
-        return "no previous month" if f.prev_rag is None else "n/a"
-    if f.delta == 0:
-        return "unchanged"
-    moved = "rose" if f.delta > 0 else "fell"
+def _change(f) -> str:
+    """'Last month 0.151, so it rose (deteriorated).' with the direction pre-computed for the model."""
+    if f.prev_rag is None:
+        return ""
+    if f.prev is None or f.value is None:
+        return ""
+    if fmt(f.value, f.metric) == fmt(f.prev, f.metric):
+        return f" Last month {fmt(f.prev, f.metric)}, so it is unchanged."
+    moved = "rose" if f.value > f.prev else "fell"
     bad_now, bad_before = f.badness(f.value), f.badness(f.prev)
-    if bad_now is None or bad_before is None or bad_now == bad_before:
-        return moved
-    return f"{moved} ({'deteriorated' if bad_now > bad_before else 'improved'})"
+    if bad_now is not None and bad_before is not None and bad_now != bad_before:
+        moved += f" ({'deteriorated' if bad_now > bad_before else 'improved'})"
+    return f" Last month {fmt(f.prev, f.metric)}, so it {moved}."
 
 
-def _thresholds(f) -> str:
-    if f.metric == "calibration_ratio":
-        return "AMBER if more than 0.15 away from 1.0, RED if more than 0.30 away"
-    if f.amber is None or f.red is None:
-        return "no threshold (context only)"
-    return f"AMBER at {fmt(f.amber, f.metric)}, RED at {fmt(f.red, f.metric)}"
+def _status(f) -> str:
+    return f"{f.rag}" if f.rag in ("GREEN", "AMBER", "RED") else "no status"
 
 
 def fact_sheet(facts: MonthFacts) -> str:
-    prev = facts.prev_month or "none (first monitored month)"
+    prev = facts.prev_month
     lines = [
-        f"Month: {facts.month}. Previous month: {prev}. Model: {facts.model_version}.",
-        f"Overall status: {facts.overall_rag}"
-        + (f" (previous month: {facts.prev_overall_rag})." if facts.prev_overall_rag else "."),
-        "Outcomes observable: "
+        f"Month: {facts.month}. Previous month: "
         + (
-            "yes."
-            if facts.outcomes_observable
-            else "no - this vintage has not matured, so Gini, KS, AUC and calibration are n/a; "
-            "only population stability can be assessed."
-        ),
-        "",
-        "Model-level metrics (value | previous month | change vs previous month | status | thresholds):",
+            prev
+            if prev
+            else "none (first monitored month): do not describe any change or compare with last month"
+        )
+        + ".",
+        f"Overall status: {facts.overall_rag}"
+        + (f" (last month: {facts.prev_overall_rag})." if facts.prev_overall_rag else "."),
     ]
-    for metric, label in SCALAR_METRICS:
-        f = facts.get(metric)
-        if f is None:
-            continue
-        status = f.rag if f.rag != "NA" else "no status"
+    if not facts.outcomes_observable:
         lines.append(
-            f"- {label}: {fmt(f.value, metric)} | {fmt(f.prev, metric)} | {_direction_word(f)} | "
-            f"{status} | {_thresholds(f)}"
+            "Outcomes are not observable yet (immature vintage): Gini, KS, AUC, calibration ratio and "
+            "Hosmer-Lemeshow are not available. Only population stability can be assessed."
         )
-        if f.baseline is not None:
-            lines.append(f"  ({label} development baseline: {fmt(f.baseline, metric)})")
-    lines += ["", "Feature drift, CSI, most drifted first (value | previous month | change | status):"]
-    lines.append("  CSI thresholds: AMBER at 0.100, RED at 0.250.")
-    for f in facts.csi():
-        lines.append(
-            f"- {feature_label(f.segment)}: {fmt(f.value, 'csi')} | {fmt(f.prev, 'csi')} | "
-            f"{_direction_word(f)} | {f.rag}"
-        )
-    top = ", ".join(feature_label(f.segment) for f in facts.csi()[:3])
-    lines.append(f"Top drifting features: {top}.")
     alerts = facts.alerts()
-    lines += ["", f"Headline alerts this month ({len(alerts)}):"]
-    for f in alerts:
-        name = f"CSI {feature_label(f.segment)}" if f.metric == "csi" else dict(SCALAR_METRICS)[f.metric]
-        lines.append(f"- {name}: {f.rag}")
-    if not alerts:
-        lines.append("- none: every headline metric is GREEN.")
+    names = [
+        f"{'CSI ' + feature_label(f.segment) if f.metric == 'csi' else dict(SCALAR_METRICS)[f.metric]} {f.rag}"
+        for f in alerts
+    ]
+    lines += [
+        "",
+        f"HEADLINE ALERTS ({len(alerts)}): "
+        + ("; ".join(names) if names else "none, every headline metric is GREEN")
+        + ".",
+    ]
     bands = facts.band_breaches()
     if bands:
         listed = ", ".join(f"band {b.segment.removeprefix('band=')} ({b.rag})" for b in bands)
-        lines.append(f"Score bands failing the binomial calibration test: {listed}.")
+        lines.append(f"Score bands failing the binomial calibration test (detail, not headline): {listed}.")
+    lines += ["", "MODEL-LEVEL METRICS"]
+    for metric, label in SCALAR_METRICS:
+        f = facts.get(metric)
+        if f is None or not f.available:
+            continue
+        lines.append(f"- {label} is {fmt(f.value, metric)}, {_status(f)}.{_change(f)}")
+    lines += ["", "FEATURE DRIFT (CSI, most drifted first)"]
+    csi = facts.csi()
+    shown = [f for f in csi if f.rag in ("AMBER", "RED")] or csi[:1]
+    shown += [f for f in csi[:3] if f not in shown]
+    for f in shown:
+        lines.append(f"- {feature_label(f.segment)}: CSI {fmt(f.value, 'csi')}, {f.rag}.{_change(f)}")
+    rest = [feature_label(f.segment) for f in csi if f not in shown]
+    if rest:
+        lines.append(f"- All other features ({', '.join(rest)}): CSI GREEN.")
+    lines.append("Top drifting features: " + ", ".join(feature_label(f.segment) for f in csi[:3]) + ".")
     return "\n".join(lines)
 
 
@@ -113,9 +114,13 @@ def retry_message(problems: list[str]) -> str:
 
 
 def build_messages(facts: MonthFacts, history: list[tuple[str, list[str]]] | None = None) -> list[dict]:
-    """Chat messages: the fact sheet, then (draft, problems) pairs from earlier rejected attempts."""
+    """Chat messages: the fact sheet, then the most recent rejected draft and its checker findings.
+
+    Only the last rejected draft is sent back: a small model given every earlier draft tends to copy
+    them, and the context (and generation time) grows with each retry.
+    """
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user_message(facts)}]
-    for draft, problems in history or []:
+    for draft, problems in (history or [])[-1:]:
         messages.append({"role": "assistant", "content": draft})
         messages.append({"role": "user", "content": retry_message(problems)})
     return messages

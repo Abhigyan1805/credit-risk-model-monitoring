@@ -126,3 +126,7 @@ def test_from_to_order(march):
     assert "wrong_number" not in kinds("Score PSI rose from 0.151 to 0.183.", march)
     assert "wrong_number" in kinds("Score PSI rose from 0.183 to 0.151.", march)
     assert "wrong_status" in kinds("The calibration ratio is in the green zone.", march)
+
+
+def test_other_features_green(march):
+    assert "wrong_status" not in kinds("All other features are GREEN.", march)

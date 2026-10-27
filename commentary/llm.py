@@ -18,7 +18,7 @@ DEFAULT_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 class Drafter(Protocol):
     name: str
 
-    def generate(self, messages: list[dict]) -> str: ...
+    def generate(self, messages: list[dict], attempt: int = 0) -> str: ...
 
     def settings(self) -> dict: ...
 
@@ -27,8 +27,10 @@ class Drafter(Protocol):
 class HFSettings:
     model_id: str = DEFAULT_MODEL_ID
     quantization: str = "nf4"  # nf4 (bitsandbytes 4-bit, GPU) | fp16 (GPU) | fp32 (CPU)
-    max_new_tokens: int = 320
-    do_sample: bool = False  # greedy decoding: reproducible drafts
+    max_new_tokens: int = 400
+    do_sample: bool = False  # first draft: greedy decoding
+    retry_temperature: float = 0.7  # retries: seeded sampling, so a retry is not a copy of the rejected draft
+    retry_top_p: float = 0.9
     repetition_penalty: float = 1.05
     seed: int = 0
 
@@ -46,7 +48,8 @@ class HFDrafter:
         local = Path(self.cfg.model_id)
         if (local / "HF_ID").exists():  # a pre-downloaded snapshot: record where it came from
             self.name = (local / "HF_ID").read_text().strip()
-            self.revision = (local / "REVISION").read_text().strip() if (local / "REVISION").exists() else None
+            rev = local / "REVISION"
+            self.revision = rev.read_text().strip() if rev.exists() else None
         torch.manual_seed(self.cfg.seed)
         kwargs: dict = {}
         if self.cfg.quantization == "nf4":
@@ -68,16 +71,21 @@ class HFDrafter:
         self.model.eval()
         self._torch = torch
 
-    def generate(self, messages: list[dict]) -> str:
+    def generate(self, messages: list[dict], attempt: int = 0) -> str:
         prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        sample = self.cfg.do_sample or attempt > 0
+        decoding = {"do_sample": sample}
+        if sample:
+            self._torch.manual_seed(self.cfg.seed + attempt)  # reproducible retries
+            decoding.update(temperature=self.cfg.retry_temperature, top_p=self.cfg.retry_top_p)
         with self._torch.inference_mode():
             out = self.model.generate(
                 **inputs,
                 max_new_tokens=self.cfg.max_new_tokens,
-                do_sample=self.cfg.do_sample,
                 repetition_penalty=self.cfg.repetition_penalty,
                 pad_token_id=self.tokenizer.eos_token_id,
+                **decoding,
             )
         return self.tokenizer.decode(out[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True).strip()
 
@@ -107,7 +115,7 @@ class ScriptedDrafter:
         self.name = name
         self.calls: list[list[dict]] = []
 
-    def generate(self, messages: list[dict]) -> str:
+    def generate(self, messages: list[dict], attempt: int = 0) -> str:
         self.calls.append(messages)
         return self.drafts[min(len(self.calls) - 1, len(self.drafts) - 1)]
 
