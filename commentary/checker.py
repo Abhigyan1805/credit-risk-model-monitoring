@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 
 from commentary.facts import FEATURE_LABELS, MetricFact, MonthFacts
 
+SECTIONS = ("What changed", "Alerts", "Likely drivers", "Recommended action")
 ISSUE_KINDS = (
     "wrong_number",
     "unsupported_number",
@@ -875,6 +876,9 @@ class Checker:
 
     def _check_omissions(self, text: str, mentioned: set, result: CheckResult) -> None:
         f = self.facts
+        for label in SECTIONS:
+            if not re.search(rf"{label}\s*:", text, _FLAGS):
+                result.issues.append(Issue("omission", label, f'the "{label}:" paragraph is missing'))
         if f.overall_rag in ("GREEN", "AMBER", "RED") and not re.search(
             rf"\b{f.overall_rag}\b", text, _FLAGS
         ):

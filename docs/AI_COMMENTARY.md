@@ -71,7 +71,7 @@ sentence; "Gini and KS fell" attaches to both) and checks it:
 | counts | "3 features are RED", "9 headline alerts" must match the results. |
 | drivers | in "Likely drivers" (or sentences with "driven by / due to / reflects"), a named feature must have AMBER/RED CSI or be among the top-3 CSI. |
 | contradiction | "no alerts / all metrics green" when alerts fired; "not available" for a metric that is available. |
-| omission | the overall status, every RED model-level metric and the most drifted RED feature must be mentioned. |
+| omission | all four paragraphs must be present, and the overall status, every RED model-level metric and the most drifted RED feature must be mentioned. |
 
 Anything a number cannot be attached to is checked against every value in the month's results and
 flagged as **unsupported** if it matches none. Free-text judgement ("recommended action") is not

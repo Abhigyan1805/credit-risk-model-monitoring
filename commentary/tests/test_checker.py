@@ -56,7 +56,7 @@ def test_single_corruption_is_caught(march, old, new, kind):
 
 
 def test_rounding_tolerance(march):
-    assert check("Overall status is RED. Score PSI is 0.18 (AMBER).", march).kinds() == ["omission"] * 3
+    assert check("Overall status is RED. Score PSI is 0.18 (AMBER).", march).kinds() == ["omission"] * 7
     issues = check("Overall status is RED. Score PSI is 0.19 (AMBER).", march).kinds()
     assert "wrong_number" in issues
     assert "wrong_number" not in kinds("The observed default rate is 16%.", march)
@@ -115,3 +115,8 @@ def test_band_lists_each_keep_their_own_status(march):
     ok = "The binomial test flags score band 8 RED, band 9 AMBER."
     assert "wrong_status" not in kinds(ok, march)
     assert "wrong_status" in kinds("The binomial test flags score band 8 RED, band 9 RED.", march)
+
+
+def test_missing_paragraph_is_an_omission(march):
+    found = check(GOOD_MARCH.split("\n\nRecommended action:")[0], march)
+    assert [i.claim for i in found.issues] == ["Recommended action"]
