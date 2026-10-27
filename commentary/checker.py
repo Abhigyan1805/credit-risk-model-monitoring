@@ -494,6 +494,9 @@ class Checker:
                 merged
                 and g.keys[0][0] == "band"
                 and merged[-1].keys[0][0] in ("calibration_ratio", "binomial_pvalue")
+                and all(k[1] in (None, "ALL") for k in merged[-1].keys)  # not yet tied to bands
+                and re.fullmatch(r"[^\d]{0,40}", s[merged[-1].end : g.start])
+                and not _RAG_WORD.search(s[merged[-1].end : g.start])
             ):
                 metric = merged[-1].keys[0][0]
                 merged[-1] = _Mention(merged[-1].start, g.end, [(metric, k[1]) for k in g.keys])

@@ -109,3 +109,9 @@ def test_small_p_values(march):
     assert "wrong_number" not in kinds("The Hosmer-Lemeshow p-value is 1.2e-4 (RED).", march)
     assert "wrong_number" in kinds("The Hosmer-Lemeshow p-value is 3.2e-4 (RED).", march)
     assert "wrong_number" in kinds("The Hosmer-Lemeshow p-value is > 0.05 (RED).", march)
+
+
+def test_band_lists_each_keep_their_own_status(march):
+    ok = "The binomial test flags score band 8 RED, band 9 AMBER."
+    assert "wrong_status" not in kinds(ok, march)
+    assert "wrong_status" in kinds("The binomial test flags score band 8 RED, band 9 RED.", march)
