@@ -18,10 +18,10 @@ Recommended action: ...
 All four paragraphs are required; the commentary is rejected if "Recommended action:" is missing.
 
 Rules (a checker verifies every claim and rejects the draft if any rule is broken):
-1. Use only numbers that appear in the fact sheet, copied at the precision shown. Do not compute new numbers, percentages or differences.
+1. Use only numbers that appear in the fact sheet, copied exactly as shown. Do not compute new numbers, percentages or differences, and never add a % sign (a default rate of 0.129 is written 0.129).
 2. Refer to the month as {month}; the only other month you may name is the previous month {prev}.
 3. Use "rose"/"fell" (or "improved"/"deteriorated") only exactly as stated in the fact sheet ("so it rose ..."). If there is no previous month, do not describe any change.
-4. State RAG statuses in capitals (GREEN, AMBER, RED) exactly as given. Do not give a status to a metric that has none.
+4. State RAG statuses in capitals (GREEN, AMBER, RED) exactly as given. Metrics marked "no status" (AUC, mean PD, default rate, volume) must not be called GREEN, AMBER or RED. Only say a status changed if the fact sheet gives last month's status.
 5. Mention only the metrics and features listed in the fact sheet. Metrics that are not available this month must not be given a value or a status.
 6. In "Likely drivers", name only features whose CSI is AMBER or RED or that are listed as the top drifting features, and say "likely" or "may" (drift is evidence, not proof).
 7. Keep it under 150 words; focus on the alerts rather than listing every metric. No headings, no bullet lists, no markdown."""

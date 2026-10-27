@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from commentary.facts import FEATURE_LABELS, MetricFact, MonthFacts
 
@@ -50,9 +50,11 @@ class Issue:
     kind: str
     claim: str
     detail: str
+    sentence: str = ""  # the draft sentence the claim was found in (helps the model locate it)
 
     def feedback(self) -> str:
-        return f'{self.kind.replace("_", " ")}: "{self.claim}" - {self.detail}'
+        where = f' in the sentence "{self.sentence}"' if self.sentence else ""
+        return f'{self.kind.replace("_", " ")}: "{self.claim}"{where} - {self.detail}'
 
 
 @dataclass
@@ -303,6 +305,13 @@ class Checker:
 
     # ---- sentence-level
     def _check_sentence(self, s: str, result: CheckResult, mentioned: set, in_driver_para: bool) -> None:
+        first_new = len(result.issues)
+        self._check_sentence_items(s, result, mentioned, in_driver_para)
+        result.issues[first_new:] = [replace(i, sentence=s.strip()) for i in result.issues[first_new:]]
+
+    def _check_sentence_items(
+        self, s: str, result: CheckResult, mentioned: set, in_driver_para: bool
+    ) -> None:
         excluded: list[tuple[int, int]] = []
         self._check_months(s, result, excluded)
         band_mentions = self._band_mentions(s, excluded)
@@ -759,9 +768,13 @@ class Checker:
         if not facts:
             overall = self.facts.get("overall_rag")
             facts = [overall] if overall else []
-        if target is not None and any(k[0] == "csi" and k[1] is None for k in target.keys) and not use_prev:
-            if not any(f.rag in rags for f in facts):
-                result.issues.append(Issue("wrong_status", item.text, "no CSI feature has this status"))
+        if target is not None and any(k[0] == "csi" and k[1] is None for k in target.keys):
+            truths = [f.prev_rag if use_prev else f.rag for f in facts]
+            if not any(t in rags for t in truths):
+                when = "last month" if use_prev else self.facts.month
+                result.issues.append(
+                    Issue("wrong_status", item.text, f"no CSI feature had this status in {when}")
+                )
             return
         for f in facts:
             truth = f.prev_rag if use_prev else f.rag
