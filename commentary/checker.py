@@ -101,7 +101,7 @@ _METRIC_PATTERNS: list[tuple[str, str | None, str]] = [
     (
         "csi",
         None,
-        r"\b(?:all )?(?:other|remaining) (?:features|characteristics|variables)\b|\bcsi\b"
+        r"\b(?:all )?(?:other|remaining) (?:features|characteristics|variables)\b|\bcsis?\b"
         r"|\bcharacteristic stability(?: index)?\b",
     ),
     ("gini", "ALL", r"\bgini(?: coefficient)?\b"),

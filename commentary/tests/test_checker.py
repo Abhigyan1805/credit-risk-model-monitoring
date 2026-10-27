@@ -143,3 +143,6 @@ def test_audited_false_alarms_stay_fixed(march):
     )
     found = check("Interest rate and FICO have CSI values above 0.10.", march)
     assert found.kinds().count("wrong_number") == 1
+    assert "wrong_status" not in kinds(
+        "Interest rate and grade drift may matter, as their CSIs are RED and AMBER.", march
+    )
