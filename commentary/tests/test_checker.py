@@ -130,3 +130,16 @@ def test_from_to_order(march):
 
 def test_other_features_green(march):
     assert "wrong_status" not in kinds("All other features are GREEN.", march)
+
+
+def test_audited_false_alarms_stay_fixed(march):
+    # Found by auditing development-run drafts: negation, plain "accuracy", "recalibration ratio".
+    assert "wrong_direction" not in kinds(
+        "The overall status is RED, indicating no significant improvement.", march
+    )
+    assert "invented_metric" not in kinds("Interest rate drift may be affecting its accuracy.", march)
+    assert "unsupported_number" not in kinds(
+        "The recalibration ratio rose to 1.381 from 1.290, which is RED.", march
+    )
+    found = check("Interest rate and FICO have CSI values above 0.10.", march)
+    assert found.kinds().count("wrong_number") == 1

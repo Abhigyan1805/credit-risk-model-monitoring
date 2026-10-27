@@ -108,19 +108,19 @@ def retry_message(problems: list[str]) -> str:
     return (
         "The checker rejected your draft. Problems found:\n"
         f"{listed}\n\n"
-        "Rewrite the whole commentary, fixing every problem and following all rules. "
-        "Only state facts from the fact sheet."
+        "Write a new commentary from the fact sheet, fixing every problem and following all rules. "
+        "Do not reuse the rejected sentences. Only state facts from the fact sheet."
     )
 
 
 def build_messages(facts: MonthFacts, history: list[tuple[str, list[str]]] | None = None) -> list[dict]:
-    """Chat messages: the fact sheet, then the most recent rejected draft and its checker findings.
+    """Chat messages: the fact sheet plus, on a retry, the checker's findings on the last rejected draft.
 
-    Only the last rejected draft is sent back: a small model given every earlier draft tends to copy
-    them, and the context (and generation time) grows with each retry.
+    The findings quote the offending sentences; earlier drafts themselves are not sent, so the context
+    stays short and the model writes afresh instead of copying.
     """
-    messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user_message(facts)}]
-    for draft, problems in (history or [])[-1:]:
-        messages.append({"role": "assistant", "content": draft})
-        messages.append({"role": "user", "content": retry_message(problems)})
-    return messages
+    content = user_message(facts)
+    for _draft, problems in (history or [])[-1:]:
+        # The rejected draft is not replayed as an assistant turn: the model then tends to copy it.
+        content += "\n\n" + retry_message(problems)
+    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}]

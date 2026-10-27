@@ -55,6 +55,7 @@ def test_retry_then_publish_and_render(data_root):
     assert c.attempts[0].issues[0]["kind"] == "wrong_number"
     # The second prompt carried the checker's feedback.
     assert "The checker rejected your draft" in drafter.calls[1][-1]["content"]
+    assert len(drafter.calls[1]) == 2  # system + user: the rejected draft is not replayed
     commentary_run.write_commentary(c)
 
     html = write_report(load_results(up_to=MONTHS[1]), MONTHS[1]).read_text(encoding="utf-8")

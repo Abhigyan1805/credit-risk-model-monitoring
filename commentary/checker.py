@@ -94,7 +94,7 @@ _METRIC_PATTERNS: list[tuple[str, str | None, str]] = [
     (
         "calibration_ratio",
         "ALL",
-        r"\bcalibration ratio\b|\bobserved[- ]to[- ]predicted(?: ratio)?|observed\s*/\s*predicted(?: ratio)?"
+        r"\b(?:re)?calibration ratio\b|\bobserved[- ]to[- ]predicted(?: ratio)?|observed\s*/\s*predicted(?: ratio)?"
         r"|\bo/e(?: ratio)?\b|\bobserved\s*/\s*calibrated(?: ratio)?|\bcalibration\b",
     ),
     ("psi_score", "ALL", r"\b(?:score )?psi\b|\bpopulation stability(?: index)?\b"),
@@ -130,7 +130,7 @@ _FEATURE_PATTERNS: dict[str, str] = {
     "purpose": r"\b(?:loan )?purposes?\b",
 }
 _INVENTED = re.compile(
-    r"\b(?:brier(?: score)?|r-?squared|r²|rmse|mape|log[- ]?loss|f1(?: score)?|precision|recall|accuracy(?: ratio)?"
+    r"\b(?:brier(?: score)?|r-?squared|r²|rmse|mape|log[- ]?loss|f1(?: score)?|accuracy ratio"
     r"|information value|vif|cap curve|kl divergence|kullback|wasserstein|jensen[- ]shannon|lgd|ead|expected loss"
     r"|rwa|approval rate|delinquency rate|loss rate|charge[- ]off rate|net interest margin|value at risk|loss given default"
     r"|exposure at default|odds ratio|herfindahl|hhi|loan terms?|sub-?grades?|installments?|addr_state"
@@ -571,7 +571,7 @@ class Checker:
         for m in _DIRECTION.finditer(s):
             word = m.group(1).lower()
             cls = next(c for c, pat in _DIR_CLASS if re.fullmatch(pat, word))
-            if _NEGATION.search(s[max(0, m.start() - 12) : m.start()]):
+            if _NEGATION.search(s[max(0, m.start() - 25) : m.start()]):
                 continue
             items.append(_Item(m.start(), m.end(), "direction", m.group(0), {"cls": cls}))
         for m in _UNAVAILABLE.finditer(s):
@@ -687,12 +687,14 @@ class Checker:
                 else d["value"]
             )
             avail = [f for f in facts if f.available]
-            for f in avail:
-                truth = f.value
-                if (above and not truth > claimed) or (not above and not truth < claimed):
-                    result.issues.append(
-                        Issue("wrong_number", f"{cmp_word} {item.text}", f"{_name(f)} is {_fmt(truth)}")
-                    )
+            wrong = [
+                f for f in avail if (above and not f.value > claimed) or (not above and not f.value < claimed)
+            ]
+            if wrong:  # one issue per claim, however many facts the claim covers
+                truth = ", ".join(f"{_name(f)} {_fmt(f.value)}" for f in wrong[:3])
+                result.issues.append(
+                    Issue("wrong_number", f"{cmp_word} {item.text}", f"the results show {truth}")
+                )
             if avail or not facts:
                 return
         cands = self._candidates(facts, clause, d)
