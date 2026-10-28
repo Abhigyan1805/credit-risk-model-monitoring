@@ -1,9 +1,12 @@
 # Shared Makefile. All targets use .venv; CRM_DATA_DIR selects the data root (default ./data).
 PY := .venv/bin/python
+TORCH_VERSION := 2.14.1
+# Drafting model for `make commentary`: a local directory or a Hugging Face id (see docs/AI_COMMENTARY.md).
+LLM ?= Qwen/Qwen2.5-3B-Instruct
 MONTHS = $(shell $(PY) -c "from common.config import monitor_months; print(' '.join(monitor_months()))")
 
-.PHONY: setup setup-airflow lint test download ingest sample train score monitor report extracts \
-        e2e demo airflow-test clean
+.PHONY: setup setup-airflow setup-ai lint test download ingest sample train score monitor report extracts \
+        commentary commentary-eval e2e demo airflow-test clean
 
 setup:
 	uv venv --python 3.12 .venv
@@ -11,6 +14,11 @@ setup:
 
 setup-airflow:
 	uv pip install --python $(PY) -e ".[airflow]"
+
+# Local LLM for the AI commentary: CUDA torch from the PyTorch index, then transformers + bitsandbytes.
+setup-ai:
+	uv pip install --python $(PY) torch==$(TORCH_VERSION) --index-url https://download.pytorch.org/whl/cu126
+	uv pip install --python $(PY) -e ".[ai]"
 
 lint:
 	.venv/bin/ruff check . && .venv/bin/ruff format --check .
@@ -43,6 +51,15 @@ report:
 
 extracts:
 	$(PY) -m reporting.extracts
+
+# AI-drafted, checker-verified commentary for every month (needs `make setup-ai` and a GPU), then the
+# reports again so they carry it, then the evaluation (writes docs/AI_COMMENTARY.md).
+commentary:
+	$(PY) -m commentary.run --all --model-id $(LLM)
+	$(MAKE) report
+
+commentary-eval:
+	$(PY) -m commentary.evaluate
 
 # Full real-data pipeline, all monthly vintages, one command.
 e2e: download ingest train score monitor report extracts

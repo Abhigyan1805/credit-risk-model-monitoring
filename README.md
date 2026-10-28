@@ -31,7 +31,8 @@ flowchart LR
   AF -.-> REP
 ```
 Components: `ingest/` data acquisition, `model/` PD model, `monitoring/` metrics + alert engine, `reporting/`
-reports and extracts, `orchestration/` Airflow DAG, `common/` shared paths/config/schemas.
+reports and extracts, `commentary/` AI-drafted, checker-verified monthly commentary, `orchestration/` Airflow DAG,
+`common/` shared paths/config/schemas.
 Interfaces between components are Parquet files with exact schemas: [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
 ## Data
@@ -46,6 +47,8 @@ make setup                 # Python 3.12 venv, pinned deps (uv)
 make test lint             # fixtures only
 make demo                  # whole pipeline on the sample fixture, a few minutes
 make e2e                   # full real run: needs ~/.kaggle/access_token; ~5 minutes, ~1.2 GB RAM peak
+make setup-ai              # optional: local LLM (CUDA torch, transformers, bitsandbytes), then:
+make commentary LLM=Qwen/Qwen2.5-3B-Instruct && make commentary-eval   # AI commentary + its evaluation
 make setup-airflow         # optional, then:
 bash orchestration/run_dag_test.sh 2014-01 2014-02   # run the DAG natively, one run per month
 ```
@@ -59,6 +62,14 @@ Outputs land in `data/` (git-ignored): `data/reports/monitoring_report_<month>.h
   to 1.54** as the model under-predicted defaults for later vintages; **score PSI peaked at 0.28 (red) in 2016-01**, and
   interest-rate characteristic drift (CSI) was red in 24 months, while **Gini stayed 0.31-0.38** (ranking held up; levels drifted).
 * Airflow DAG verified with `airflow dags test` on real data: all 6 tasks succeed per month; idempotent per month.
+* **AI-drafted, verified commentary** ([docs/AI_COMMENTARY.md](docs/AI_COMMENTARY.md)): a local Qwen2.5-3B-Instruct
+  (4-bit, laptop GPU, no API) drafts each month's commentary; a rule-based checker verifies every number, status,
+  direction, month and metric against the results and blocks anything unsupported. Over 36 months only **3 first
+  drafts passed, 1 more after feedback, 32 fell back to the deterministic template**, so no unverified text was
+  published. An audit of the rejected first drafts found **59 genuine model errors vs 26 checker false alarms**
+  (since fixed). Seeded corrupted drafts: **309/310 caught**; 0/36 clean paraphrases flagged. Residual weakness: the
+  checker verifies atomic claims, not relations; 2 of the 4 published LLM texts still had a qualitative error.
+  36 commentaries took 69 min of local generation; no analyst-time saving is claimed.
 
 ## Honest notes
 * Public **consumer** loan data, not bank corporate/wholesale data; a company credit-rating model was not built.
@@ -67,6 +78,8 @@ Outputs land in `data/` (git-ignored): `data/reports/monitoring_report_<month>.h
 * Calibration tests at ~10k loans/month are very powerful, so p-value alerts fire often; thresholds are configurable
   in `config/thresholds.yaml` and the trade-off is discussed in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
 * 2016 vintages have no observable outcomes yet (36-month loans), so they are monitored on stability only.
+* The AI commentary is a portfolio experiment, not a production control; its checker was built and evaluated on
+  the same 36 months (see the weaknesses in [docs/AI_COMMENTARY.md](docs/AI_COMMENTARY.md)).
 
 ## Layout
-`docs/` CONTRACTS, RESULTS, WALKTHROUGH, DASHBOARD_SPEC, plus per-component notes (`docs/model`, `docs/monitoring`, `docs/reporting`).
+`docs/` CONTRACTS, RESULTS, WALKTHROUGH, DASHBOARD_SPEC, AI_COMMENTARY, plus per-component notes (`docs/model`, `docs/monitoring`, `docs/reporting`).

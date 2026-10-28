@@ -39,6 +39,10 @@ def monitoring_dir() -> Path:
     return data_dir() / "monitoring" / "results"
 
 
+def commentary_path(month: str) -> Path:
+    return data_dir() / "commentary" / f"month={month}.json"
+
+
 def reports_dir() -> Path:
     return data_dir() / "reports"
 

@@ -18,6 +18,7 @@ from typing import Any
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from commentary.run import load_commentary
 from common import paths
 from reporting import charts
 from reporting.data import available_months, load_results
@@ -106,6 +107,38 @@ def build_report_context(results: pd.DataFrame, generated_at: str | None = None)
         "month_max": latest_month,
         "n_months": int(len(summary)),
         "default_rate": _fmt(latest.get("default_rate")),
+        "commentary": _commentary_context(latest_month),
+    }
+
+
+#: How each publication path is described next to the commentary.
+_COMMENTARY_PATHS = {
+    "llm_first_pass": "AI-drafted, verified: the first LLM draft passed every check.",
+    "llm_after_retry": "AI-drafted, verified: an earlier LLM draft failed the checker; this revision passed.",
+    "template_fallback": (
+        "Template fallback: no LLM draft passed the checker, so a deterministic summary is shown."
+    ),
+    "template_only": "Deterministic template summary (no LLM was run).",
+}
+
+
+def _commentary_context(month: str) -> dict[str, Any] | None:
+    """The published commentary for ``month`` (``commentary.run`` output), or None if none was made."""
+    c = load_commentary(month)
+    if c is None:
+        return None
+    rejected = [a for a in c["attempts"] if not a["passed"]]
+    return {
+        "paragraphs": [p.strip() for p in c["text"].split("\n") if p.strip()],
+        "path": c["path"],
+        "is_llm": c["path"].startswith("llm"),
+        "path_text": _COMMENTARY_PATHS.get(c["path"], c["path"]),
+        "model": c["model"].get("model_id", c["model"].get("name", "")),
+        "quantization": c["model"].get("quantization"),
+        "n_claims": c["n_claims"],
+        "n_attempts": len(c["attempts"]),
+        "rejected_issues": [i for a in rejected for i in a["issues"]],
+        "generated_at": c["generated_at"],
     }
 
 

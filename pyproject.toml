@@ -23,13 +23,20 @@ dev = ["pytest==9.1.1", "ruff==0.17.0"]
 # Airflow is heavy: only needed for `make airflow-test` / the orchestration/ DAG.
 airflow = ["apache-airflow==3.3.2"]
 ingest = ["kaggle"]
+# Local LLM for commentary/ (make setup-ai installs CUDA torch from the PyTorch index first).
+ai = [
+    "torch==2.14.1",
+    "transformers==5.21.0",
+    "accelerate==1.15.0",
+    "bitsandbytes==0.50.2",
+]
 
 # Explicit package list: a flat layout with several top-level packages breaks `pip install -e` otherwise.
 [tool.setuptools]
-packages = ["common", "ingest", "model", "monitoring", "reporting", "orchestration"]
+packages = ["common", "ingest", "model", "monitoring", "reporting", "orchestration", "commentary"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "ingest", "model", "monitoring", "reporting", "orchestration"]
+testpaths = ["tests", "ingest", "model", "monitoring", "reporting", "orchestration", "commentary"]
 python_files = ["test_*.py"]
 
 [tool.ruff]
@@ -42,3 +49,9 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "orchestration/results_doc.py" = ["E501"]
+# The checker lexicon is long regex alternations; wrapping them would hurt auditability.
+"commentary/checker.py" = ["E501"]
+# Prompt rules and hand-written test drafts are prose.
+"commentary/prompt.py" = ["E501"]
+"commentary/evaluate.py" = ["E501"]
+"commentary/tests/*.py" = ["E501"]
